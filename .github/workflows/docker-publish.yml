@@ -21,6 +21,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      pull-requests: write
 
     steps:
       - name: Checkout repository
@@ -58,7 +59,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -92,7 +93,7 @@ jobs:
       # Build container images using .NET's built-in container support
       # Aspire projects are standard .NET projects that can be published as containers
       - name: Build and push Nocturne.API container
-        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
         working-directory: src/API/Nocturne.API
         run: |
           dotnet publish \
@@ -104,7 +105,7 @@ jobs:
 
       # Build connector containers using .NET's built-in container support
       - name: Build and push Dexcom connector
-        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
         working-directory: src/Connectors/Nocturne.Connectors.Dexcom
         run: |
           dotnet publish \
@@ -115,7 +116,7 @@ jobs:
             -p:ContainerImageTag=${{ steps.version.outputs.version }}
 
       - name: Build and push Glooko connector
-        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
         working-directory: src/Connectors/Nocturne.Connectors.Glooko
         run: |
           dotnet publish \
@@ -126,7 +127,7 @@ jobs:
             -p:ContainerImageTag=${{ steps.version.outputs.version }}
 
       - name: Build and push FreeStyle connector
-        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
         working-directory: src/Connectors/Nocturne.Connectors.FreeStyle
         run: |
           dotnet publish \
@@ -137,7 +138,7 @@ jobs:
             -p:ContainerImageTag=${{ steps.version.outputs.version }}
 
       - name: Build and push MyLife connector
-        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
         working-directory: src/Connectors/Nocturne.Connectors.MyLife
         run: |
           dotnet publish \
@@ -149,7 +150,7 @@ jobs:
 
       # Build web app using standard Docker build (Node.js/Vite apps don't use .NET container publishing)
       - name: Build and push Nocturne.Web container
-        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
         run: |
           # Create optimized Dockerfile for SvelteKit production build
           cat > Dockerfile.web << 'EOF'
@@ -228,10 +229,103 @@ jobs:
             --push \
             .
 
+      - name: Summarize published image tags
+        if: always()
+        run: |
+          {
+            echo "### Container Image Tags"
+            echo ""
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}/nocturne-api:${{ steps.version.outputs.version }}\`"
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}/nocturne-web:${{ steps.version.outputs.version }}\`"
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}/dexcom-connector:${{ steps.version.outputs.version }}\`"
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}/glooko-connector:${{ steps.version.outputs.version }}\`"
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}/freestyle-connector:${{ steps.version.outputs.version }}\`"
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}/mylife-connector:${{ steps.version.outputs.version }}\`"
+            echo ""
+            if [[ "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.head.repo.fork }}" == "true" ]]; then
+              echo "> Publishing is skipped for fork PRs."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upsert PR comment with published images
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+        uses: actions/github-script@v7
+        env:
+          VERSION_TAG: ${{ steps.version.outputs.version }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_REPOSITORY: ${{ env.IMAGE_REPOSITORY }}
+        with:
+          script: |
+            const marker = "<!-- nocturne-pr-images -->";
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = context.payload.pull_request.number;
+            const tag = process.env.VERSION_TAG;
+            const registry = process.env.REGISTRY;
+            const imageRepo = process.env.IMAGE_REPOSITORY;
+
+            const images = [
+              "nocturne-api",
+              "nocturne-web",
+              "dexcom-connector",
+              "glooko-connector",
+              "freestyle-connector",
+              "mylife-connector",
+            ];
+
+            const lines = [];
+            lines.push(marker);
+            lines.push("## Preview Container Images");
+            lines.push("");
+            lines.push(`Published for commit \`${context.sha.substring(0, 7)}\` with tag \`${tag}\`.`);
+            lines.push("");
+            lines.push("| Image | Package | Pull |");
+            lines.push("|---|---|---|");
+
+            for (const image of images) {
+              const ref = `${registry}/${imageRepo}/${image}:${tag}`;
+              const packageUrl = `https://github.com/${owner}/${repo}/pkgs/container/${image}`;
+              lines.push(`| \`${image}\` | [package](${packageUrl}) | \`docker pull ${ref}\` |`);
+            }
+
+            lines.push("");
+            lines.push("_This comment is updated on each push to this PR._");
+            const body = lines.join("\n");
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner,
+                repo,
+                issue_number: prNumber,
+                per_page: 100,
+              }
+            );
+
+            const existing = comments.find(
+              (c) => c.user?.type === "Bot" && c.body && c.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
+
   publish-aspire-manifest:
     needs: [build-and-push]
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
     permissions:
       contents: read
 
