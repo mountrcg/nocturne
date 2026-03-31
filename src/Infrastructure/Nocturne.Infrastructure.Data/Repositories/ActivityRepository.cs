@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Nocturne.Core.Contracts.Repositories;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Data.Entities;
 using Nocturne.Infrastructure.Data.Mappers;
@@ -8,7 +9,7 @@ namespace Nocturne.Infrastructure.Data.Repositories;
 /// <summary>
 /// PostgreSQL repository for Activity operations
 /// </summary>
-public class ActivityRepository
+public class ActivityRepository : IActivityRepository
 {
     private readonly NocturneDbContext _context;
 
@@ -24,6 +25,11 @@ public class ActivityRepository
     /// <summary>
     /// Get activities with optional filtering and pagination
     /// </summary>
+    /// <param name="type">Optional activity type filter.</param>
+    /// <param name="count">The maximum number of activities to return.</param>
+    /// <param name="skip">The number of activities to skip.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of activities.</returns>
     public async Task<IEnumerable<Activity>> GetActivitiesAsync(
         string? type = null,
         int count = 10,
@@ -52,6 +58,12 @@ public class ActivityRepository
     /// <summary>
     /// Get activities with advanced filtering and search capabilities
     /// </summary>
+    /// <param name="count">The maximum number of activities to return.</param>
+    /// <param name="skip">The number of activities to skip.</param>
+    /// <param name="findQuery">Optional search query string.</param>
+    /// <param name="reverseResults">Whether to reverse the order of results.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of matching activities.</returns>
     public async Task<IEnumerable<Activity>> GetActivitiesWithAdvancedFilterAsync(
         int count = 10,
         int skip = 0,
@@ -93,6 +105,9 @@ public class ActivityRepository
     /// <summary>
     /// Get activity by ID
     /// </summary>
+    /// <param name="id">The unique identifier (GUID or legacy string ID).</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The activity, or null if not found.</returns>
     public async Task<Activity?> GetActivityByIdAsync(
         string id,
         CancellationToken cancellationToken = default
@@ -119,6 +134,9 @@ public class ActivityRepository
     /// <summary>
     /// Create new activities
     /// </summary>
+    /// <param name="activities">The collection of activities to create.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of created activities.</returns>
     public async Task<IEnumerable<Activity>> CreateActivitiesAsync(
         IEnumerable<Activity> activities,
         CancellationToken cancellationToken = default
@@ -157,6 +175,10 @@ public class ActivityRepository
     /// <summary>
     /// Update existing activity
     /// </summary>
+    /// <param name="id">The unique identifier of the activity to update.</param>
+    /// <param name="activity">The updated activity data.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The updated activity, or null if not found.</returns>
     public async Task<Activity?> UpdateActivityAsync(
         string id,
         Activity activity,
@@ -193,6 +215,9 @@ public class ActivityRepository
     /// <summary>
     /// Delete activity by ID
     /// </summary>
+    /// <param name="id">The unique identifier of the activity to delete.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True if the activity was deleted, otherwise false.</returns>
     public async Task<bool> DeleteActivityAsync(
         string id,
         CancellationToken cancellationToken = default
@@ -226,6 +251,9 @@ public class ActivityRepository
     /// <summary>
     /// Count activities with optional filtering
     /// </summary>
+    /// <param name="findQuery">Optional search query string.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The total number of matching activities.</returns>
     public async Task<long> CountActivitiesAsync(
         string? findQuery = null,
         CancellationToken cancellationToken = default
@@ -245,5 +273,72 @@ public class ActivityRepository
         }
 
         return await query.CountAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Get activities with pagination (interface-compatible overload without type)
+    /// </summary>
+    /// <param name="count">The maximum number of activities to return.</param>
+    /// <param name="skip">The number of activities to skip.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of activities.</returns>
+    async Task<IEnumerable<Activity>> IActivityRepository.GetActivityAsync(
+        int count,
+        int skip,
+        CancellationToken cancellationToken
+    )
+    {
+        return await GetActivitiesAsync(null, count, skip, cancellationToken);
+    }
+
+    /// <summary>
+    /// Get activities with pagination (interface-compatible overload without type)
+    /// </summary>
+    /// <param name="count">The maximum number of activities to return.</param>
+    /// <param name="skip">The number of activities to skip.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of activities.</returns>
+    async Task<IEnumerable<Activity>> IActivityRepository.GetActivitiesAsync(
+        int count,
+        int skip,
+        CancellationToken cancellationToken
+    )
+    {
+        return await GetActivitiesAsync(null, count, skip, cancellationToken);
+    }
+
+    /// <summary>
+    /// Create multiple activities (interface-compatible alias)
+    /// </summary>
+    /// <param name="activities">The collection of activities to create.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of created activities.</returns>
+    public async Task<IEnumerable<Activity>> CreateActivityAsync(
+        IEnumerable<Activity> activities,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return await CreateActivitiesAsync(activities, cancellationToken);
+    }
+
+    /// <summary>
+    /// Get activities with advanced filtering (interface-compatible alias)
+    /// </summary>
+    /// <param name="count">The maximum number of activities to return.</param>
+    /// <param name="skip">The number of activities to skip.</param>
+    /// <param name="findQuery">Optional search query string.</param>
+    /// <param name="reverseResults">Whether to reverse the order of results.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of matching activities.</returns>
+    public async Task<IEnumerable<Activity>> GetActivityWithAdvancedFilterAsync(
+        int count = 10,
+        int skip = 0,
+        string? findQuery = null,
+        bool reverseResults = false,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return await GetActivitiesWithAdvancedFilterAsync(
+            count, skip, findQuery, reverseResults, cancellationToken);
     }
 }

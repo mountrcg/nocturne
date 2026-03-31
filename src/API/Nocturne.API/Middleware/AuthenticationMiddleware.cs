@@ -1,6 +1,9 @@
 using Nocturne.API.Middleware.Handlers;
+using Nocturne.Core.Contracts.Multitenancy;
 using Nocturne.Core.Models;
 using Nocturne.Core.Models.Authorization;
+using OAuthScopes = Nocturne.Core.Models.Authorization.OAuthScopes;
+using ScopeTranslator = Nocturne.Core.Models.Authorization.ScopeTranslator;
 
 namespace Nocturne.API.Middleware;
 
@@ -14,6 +17,7 @@ public class AuthenticationMiddleware
     private readonly RequestDelegate _next;
     private readonly ILogger<AuthenticationMiddleware> _logger;
     private readonly IAuthHandler[] _handlers;
+    private readonly bool _isDevelopment;
 
     /// <summary>
     /// Creates a new instance of AuthenticationMiddleware
@@ -21,11 +25,13 @@ public class AuthenticationMiddleware
     public AuthenticationMiddleware(
         RequestDelegate next,
         ILogger<AuthenticationMiddleware> logger,
-        IEnumerable<IAuthHandler> handlers
+        IEnumerable<IAuthHandler> handlers,
+        IHostEnvironment environment
     )
     {
         _next = next;
         _logger = logger;
+        _isDevelopment = environment.IsDevelopment();
 
         // Sort handlers by priority (lowest first)
         _handlers = handlers.OrderBy(h => h.Priority).ToArray();
@@ -43,6 +49,12 @@ public class AuthenticationMiddleware
             // Set authentication context in HttpContext items
             context.Items["AuthContext"] = authContext;
 
+            // Set tenant ID from the resolved tenant context
+            if (context.Items["TenantContext"] is TenantContext tenantCtx)
+            {
+                authContext.TenantId = tenantCtx.TenantId;
+            }
+
             // Build and set permission trie for fast permission checking
             var permissionTrie = new PermissionTrie();
             if (authContext.IsAuthenticated && authContext.Permissions.Count > 0)
@@ -50,6 +62,25 @@ public class AuthenticationMiddleware
                 permissionTrie.Add(authContext.Permissions);
             }
             context.Items["PermissionTrie"] = permissionTrie;
+
+            // Resolve OAuth scopes from either explicit scopes (OAuth tokens) or
+            // translated from legacy permissions (api-secret, access tokens, etc.)
+            IReadOnlySet<string> grantedScopes;
+            if (authContext.IsAuthenticated && authContext.Scopes.Count > 0)
+            {
+                // OAuth token path: scopes came directly from the token claims
+                grantedScopes = OAuthScopes.Normalize(authContext.Scopes);
+            }
+            else if (authContext.IsAuthenticated && authContext.Permissions.Count > 0)
+            {
+                // Legacy path: translate Shiro-style permissions to scopes
+                grantedScopes = ScopeTranslator.FromPermissions(authContext.Permissions);
+            }
+            else
+            {
+                grantedScopes = new HashSet<string>();
+            }
+            context.Items["GrantedScopes"] = grantedScopes;
 
             // Also set the legacy AuthenticationContext for backward compatibility
             context.Items["AuthenticationContext"] = MapToLegacyContext(authContext);
@@ -87,6 +118,28 @@ public class AuthenticationMiddleware
         {
             _logger.LogError(ex, "Error during authentication");
             SetUnauthenticated(context);
+        }
+
+        // Verify authenticated subject is a member of the resolved tenant
+        var resolvedAuth = context.Items["AuthContext"] as AuthContext;
+        if (resolvedAuth is { IsAuthenticated: true, SubjectId: not null, TenantId: not null })
+        {
+            // Skip membership check for ApiSecret auth (grants admin on the resolved tenant)
+            if (resolvedAuth.AuthType != AuthType.ApiSecret)
+            {
+                var tenantMemberService = context.RequestServices.GetRequiredService<ITenantMemberService>();
+                var isMember = await tenantMemberService.IsMemberAsync(
+                    resolvedAuth.SubjectId!.Value,
+                    resolvedAuth.TenantId!.Value);
+
+                if (!isMember)
+                {
+                    _logger.LogWarning(
+                        "Subject {SubjectId} is not a member of tenant {TenantId}",
+                        resolvedAuth.SubjectId, resolvedAuth.TenantId);
+                    SetUnauthenticated(context);
+                }
+            }
         }
 
         await _next(context);
@@ -131,6 +184,20 @@ public class AuthenticationMiddleware
             }
         }
 
+        // In development mode, auto-authenticate as admin when no credentials are provided
+        if (_isDevelopment)
+        {
+            _logger.LogDebug("Development mode: auto-authenticating as admin");
+            return new AuthContext
+            {
+                IsAuthenticated = true,
+                AuthType = AuthType.ApiSecret,
+                SubjectName = "dev-admin",
+                Permissions = ["*"],
+                Roles = ["admin"],
+            };
+        }
+
         return AuthContext.Unauthenticated();
     }
 
@@ -142,6 +209,7 @@ public class AuthenticationMiddleware
         var authContext = AuthContext.Unauthenticated();
         context.Items["AuthContext"] = authContext;
         context.Items["PermissionTrie"] = new PermissionTrie();
+        context.Items["GrantedScopes"] = (IReadOnlySet<string>)new HashSet<string>();
         context.Items["AuthenticationContext"] = MapToLegacyContext(authContext);
     }
 

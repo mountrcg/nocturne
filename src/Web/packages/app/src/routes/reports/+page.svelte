@@ -59,6 +59,7 @@
     BarChart3,
     Clock,
     Calendar,
+    CalendarDays,
     FileText,
     Gauge,
     AlertTriangle,
@@ -73,11 +74,13 @@
     Sparkles,
     Activity,
     ChevronRight,
+    Syringe,
   } from "lucide-svelte";
   import TIRStackedChart from "$lib/components/reports/TIRStackedChart.svelte";
+  import ReliabilityBadge from "$lib/components/reports/ReliabilityBadge.svelte";
   import { AmbulatoryGlucoseProfile } from "$lib/components/ambulatory-glucose-profile";
   import type { ScoreCardStatus } from "$lib/components/reports/GlucoseScoreCard.svelte";
-  import { getReportsData } from "$lib/data/reports.remote";
+  import { getReportsData } from "$api/reports.remote";
   import { requireDateParamsContext } from "$lib/hooks/date-params.svelte";
   import { glucoseUnits } from "$lib/stores/appearance-store.svelte";
   import {
@@ -197,6 +200,13 @@
       icon: TrendingUp,
       reports: [
         {
+          title: "Data Overview",
+          description: "Multi-year heatmap of all your data",
+          href: "/reports/year-overview",
+          icon: CalendarDays,
+          status: "available" as const,
+        },
+        {
           title: "Day-by-Day View",
           description: "Review each day individually",
           href: "/reports/readings",
@@ -280,6 +290,13 @@
           description: "How site changes affect control",
           href: "/reports/site-change-impact",
           icon: SiteChangeIcon,
+          status: "available" as const,
+        },
+        {
+          title: "Insulin Dosing Profile",
+          description: "Standardised insulin and glucose summary",
+          href: "/reports/idp",
+          icon: Syringe,
           status: "available" as const,
         },
       ],
@@ -445,6 +462,7 @@
                         %
                       </span>
                     </div>
+                    <ReliabilityBadge reliability={analysis?.reliability} />
                   </div>
                   <div
                     class="rounded-2xl bg-slate-50 p-4 text-center dark:bg-slate-800/50"
@@ -493,7 +511,7 @@
                     <div
                       class="mt-1 text-3xl font-bold tabular-nums text-slate-900 dark:text-slate-100"
                     >
-                      {((tir?.low ?? 0) + (tir?.severeLow ?? 0)).toFixed(1)}
+                      {((tir?.low ?? 0) + (tir?.veryLow ?? 0)).toFixed(1)}
                       <span class="text-lg font-normal text-muted-foreground">
                         %
                       </span>

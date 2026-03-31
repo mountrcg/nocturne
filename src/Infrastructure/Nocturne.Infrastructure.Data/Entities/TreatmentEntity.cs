@@ -9,8 +9,14 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// Maps to Nocturne.Core.Models.Treatment
 /// </summary>
 [Table("treatments")]
-public class TreatmentEntity
+public class TreatmentEntity : ITenantScoped, ISoftDeletable
 {
+    /// <summary>
+    /// Identifier of the tenant this treatment record belongs to.
+    /// </summary>
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
+
     // === Identity ===
 
     /// <summary>
@@ -31,7 +37,7 @@ public class TreatmentEntity
     /// <summary>
     /// Event type (e.g., "Meal Bolus", "Correction Bolus")
     /// </summary>
-    [Column("eventType")]
+    [Column("event_type")]
     [MaxLength(255)]
     public string? EventType { get; set; }
 
@@ -89,7 +95,7 @@ public class TreatmentEntity
     /// <summary>
     /// UTC offset
     /// </summary>
-    [Column("utcOffset")]
+    [Column("utc_offset")]
     public int? UtcOffset { get; set; }
 
     // === Metadata ===
@@ -103,7 +109,7 @@ public class TreatmentEntity
     /// <summary>
     /// Who entered the treatment
     /// </summary>
-    [Column("enteredBy")]
+    [Column("entered_by")]
     [MaxLength(255)]
     public string? EnteredBy { get; set; }
 
@@ -117,13 +123,13 @@ public class TreatmentEntity
     /// <summary>
     /// Treatment target top
     /// </summary>
-    [Column("targetTop")]
+    [Column("target_top")]
     public double? TargetTop { get; set; }
 
     /// <summary>
     /// Treatment target bottom
     /// </summary>
-    [Column("targetBottom")]
+    [Column("target_bottom")]
     public double? TargetBottom { get; set; }
 
     /// <summary>
@@ -150,7 +156,7 @@ public class TreatmentEntity
     /// <summary>
     /// Nightscout client identifier
     /// </summary>
-    [Column("NSCLIENT_ID")]
+    [Column("nsclient_id")]
     [MaxLength(255)]
     public string? NsClientId { get; set; }
 
@@ -169,21 +175,21 @@ public class TreatmentEntity
     /// <summary>
     /// Transmitter ID (used by CGM devices)
     /// </summary>
-    [Column("transmitterId")]
+    [Column("transmitter_id")]
     [MaxLength(255)]
     public string? TransmitterId { get; set; }
 
     /// <summary>
     /// Event time as ISO string (used by Glooko connector)
     /// </summary>
-    [Column("eventTime")]
+    [Column("event_time")]
     [MaxLength(50)]
     public string? EventTime { get; set; }
 
     /// <summary>
     /// Whether this treatment is an announcement
     /// </summary>
-    [Column("isAnnouncement")]
+    [Column("is_announcement")]
     public bool? IsAnnouncement { get; set; }
 
     /// <summary>
@@ -201,6 +207,12 @@ public class TreatmentEntity
     [Column("additional_properties", TypeName = "jsonb")]
     public string? AdditionalPropertiesJson { get; set; }
 
+    /// <summary>
+    /// Insulin context snapshot at delivery time (DIA, peak, curve, concentration)
+    /// </summary>
+    [Column("insulin_context", TypeName = "jsonb")]
+    public string? InsulinContextJson { get; set; }
+
     // === System Tracking ===
 
     /// <summary>
@@ -214,6 +226,12 @@ public class TreatmentEntity
     /// </summary>
     [Column("sys_updated_at")]
     public DateTime SysUpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// When the treatment record was soft-deleted
+    /// </summary>
+    [Column("deleted_at")]
+    public DateTime? DeletedAt { get; set; }
 
     // === Owned Types ===
     // Column mappings configured via TreatmentEntityConfiguration.ConfigureOwnedTypes()

@@ -9,8 +9,17 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// Secret properties (passwords, API keys) are stored encrypted in SecretsJson.
 /// </summary>
 [Table("connector_configurations")]
-public class ConnectorConfigurationEntity
+public class ConnectorConfigurationEntity : ITenantScoped
 {
+    /// <summary>
+    /// Identifier of the tenant this connector configuration belongs to
+    /// </summary>
+    /// <summary>
+    /// The unique identifier of the tenant this record belongs to.
+    /// </summary>
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
+
     /// <summary>
     /// Primary key - UUID Version 7 for time-ordered, globally unique identification
     /// </summary>
@@ -68,4 +77,35 @@ public class ConnectorConfigurationEntity
     /// </summary>
     [Column("sys_updated_at")]
     public DateTime SysUpdatedAt { get; set; }
+
+    /// <summary>
+    /// When the connector last attempted to sync
+    /// </summary>
+    [Column("last_sync_attempt")]
+    public DateTime? LastSyncAttempt { get; set; }
+
+    /// <summary>
+    /// When the connector last successfully completed a sync
+    /// </summary>
+    [Column("last_successful_sync")]
+    public DateTime? LastSuccessfulSync { get; set; }
+
+    /// <summary>
+    /// The error message from the most recent failure
+    /// </summary>
+    [Column("last_error_message")]
+    [MaxLength(1000)]
+    public string? LastErrorMessage { get; set; }
+
+    /// <summary>
+    /// When the error occurred
+    /// </summary>
+    [Column("last_error_at")]
+    public DateTime? LastErrorAt { get; set; }
+
+    /// <summary>
+    /// Current health status
+    /// </summary>
+    [Column("is_healthy")]
+    public bool IsHealthy { get; set; } = true;
 }

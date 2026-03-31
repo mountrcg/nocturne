@@ -33,7 +33,8 @@
   import type {
     JsonSchema,
     JsonSchemaProperty,
-  } from "$lib/data/connectorConfig.remote";
+  } from "$api/connectorConfig.remote";
+  import { getPropertyMeta } from "$lib/config/connectorPropertyMeta";
 
   interface Props {
     schema: JsonSchema;
@@ -43,9 +44,7 @@
     effectiveConfig?: Record<string, unknown> | null;
     /** Whether secrets are configured (from API) */
     hasSecrets?: boolean;
-    onSaveConfiguration: (config: Record<string, unknown>) => Promise<void>;
-    onSaveSecrets?: (secrets: Record<string, string>) => Promise<void>;
-    isSaving?: boolean;
+    onSave: (config: Record<string, unknown>, secrets: Record<string, string>) => Promise<void>;
   }
 
   let {
@@ -54,9 +53,7 @@
     secrets = $bindable({}),
     effectiveConfig = null,
     hasSecrets = false,
-    onSaveConfiguration,
-    onSaveSecrets,
-    isSaving = false,
+    onSave,
   }: Props = $props();
 
   // Track which secret fields are visible
@@ -66,12 +63,31 @@
   let initialConfiguration = $state<Record<string, unknown>>({});
   let hasInitialized = $state(false);
 
+  // Local saving state
+  let isSaving = $state(false);
+
   // Initialize initial config when configuration changes (on load/save)
   $effect(() => {
     if (!hasInitialized && Object.keys(configuration).length > 0) {
       initialConfiguration = { ...configuration };
       hasInitialized = true;
     }
+  });
+
+  const hasAnyUnsavedChanges = $derived.by(() => {
+    const allKeys = new Set([
+      ...Object.keys(configuration),
+      ...Object.keys(initialConfiguration),
+    ]);
+    for (const key of allKeys) {
+      if (String(configuration[key] ?? "") !== String(initialConfiguration[key] ?? "")) {
+        return true;
+      }
+    }
+    for (const value of Object.values(secrets)) {
+      if (value && value.trim()) return true;
+    }
+    return false;
   });
 
   // Track if advanced section is expanded
@@ -81,7 +97,8 @@
   const CATEGORY_ORDER: Record<string, number> = {
     General: 0,
     Connection: 1,
-    Sync: 2,
+    Credentials: 2, // Rendered in credentials card, not here
+    Sync: 3,
     Advanced: 100, // Always last
     Other: 99,
   };
@@ -108,7 +125,10 @@
       // Skip 'enabled' field - it's controlled by the "Enable Connector" toggle
       if (propName.toLowerCase() === "enabled") continue;
 
-      const category = propSchema["x-category"] ?? "Other";
+      const category = getPropertyMeta(propName).category;
+
+      // Skip credential-category fields - they're shown in the credentials card
+      if (category === "Credentials") continue;
 
       if (!groups[category]) {
         groups[category] = {
@@ -144,6 +164,17 @@
         schema: schema.properties[name],
       }))
       .filter((s) => s.schema);
+  });
+
+  // Get non-secret fields in the Credentials category
+  const credentialFields = $derived.by(() => {
+    const secretFieldSet = new Set(schema.secrets ?? []);
+    return Object.entries(schema.properties)
+      .filter(
+        ([name]) =>
+          getPropertyMeta(name).category === "Credentials" && !secretFieldSet.has(name)
+      )
+      .map(([name, schema]) => ({ name, schema }));
   });
 
   function getPropertyValue(propName: string): unknown {
@@ -227,51 +258,40 @@
     }
   }
 
-  async function handleSaveConfiguration(config: Record<string, unknown>) {
-    await onSaveConfiguration(config);
-    // Update initial configuration after successful save
-    initialConfiguration = { ...config };
-  }
-
-  async function handleSaveSecrets() {
-    if (onSaveSecrets) {
-      // Only send non-empty secrets
+  async function handleSave() {
+    isSaving = true;
+    try {
       const nonEmptySecrets: Record<string, string> = {};
       for (const [key, value] of Object.entries(secrets)) {
-        if (value && value.trim()) {
-          nonEmptySecrets[key] = value;
-        }
+        if (value && value.trim()) nonEmptySecrets[key] = value;
       }
-      if (Object.keys(nonEmptySecrets).length > 0) {
-        await onSaveSecrets(nonEmptySecrets);
-      }
+      await onSave(configuration, nonEmptySecrets);
+      // onSave resolves after loadConnectorData runs in the parent,
+      // so configuration now has the latest backend values
+      initialConfiguration = { ...configuration };
+      secrets = {};
+    } finally {
+      isSaving = false;
     }
   }
 
-  function formatLabel(
-    propName: string,
-    propSchema: JsonSchemaProperty
-  ): string {
-    return propSchema.title ?? formatPropertyName(propName);
+  function handleCancel() {
+    configuration = { ...initialConfiguration };
+    secrets = {};
+    visibleSecrets.clear();
   }
 
-  function formatPropertyName(name: string): string {
-    // Convert camelCase to Title Case with spaces
-    return name
-      .replace(/([A-Z])/g, " $1")
-      .replace(/^./, (s) => s.toUpperCase())
-      .trim();
-  }
 </script>
 
 {#snippet propertyField(propName: string, propSchema: JsonSchemaProperty)}
+  {@const meta = getPropertyMeta(propName)}
   <div class="space-y-2">
     {#if propSchema.type === "boolean"}
       <!-- Boolean: Switch -->
       <div class="flex items-center justify-between">
         <div class="space-y-0.5">
           <div class="flex items-center gap-2">
-            <Label>{formatLabel(propName, propSchema)}</Label>
+            <Label>{meta.label}</Label>
             {#if hasUnsavedChanges(propName)}
               <Badge variant="default" class="text-xs">Unsaved</Badge>
             {:else if hasUserOverride(propName)}
@@ -289,9 +309,9 @@
               <Badge variant="outline" class="text-xs">From Env</Badge>
             {/if}
           </div>
-          {#if propSchema.description}
+          {#if meta.description}
             <p class="text-sm text-muted-foreground">
-              {propSchema.description}
+              {meta.description}
             </p>
           {/if}
           {#if propSchema["x-envVar"]}
@@ -310,7 +330,7 @@
     {:else if propSchema.enum}
       <!-- Enum: Select -->
       <div class="flex items-center gap-2">
-        <Label>{formatLabel(propName, propSchema)}</Label>
+        <Label>{meta.label}</Label>
         {#if hasUnsavedChanges(propName)}
           <Badge variant="default" class="text-xs">Unsaved</Badge>
         {:else if hasUserOverride(propName)}
@@ -342,8 +362,8 @@
           {/each}
         </SelectContent>
       </Select>
-      {#if propSchema.description}
-        <p class="text-sm text-muted-foreground">{propSchema.description}</p>
+      {#if meta.description}
+        <p class="text-sm text-muted-foreground">{meta.description}</p>
       {/if}
       {#if propSchema["x-envVar"]}
         <p class="text-xs text-muted-foreground/70">
@@ -353,7 +373,7 @@
     {:else if propSchema.type === "integer" || propSchema.type === "number"}
       <!-- Number: Input with constraints -->
       <div class="flex items-center gap-2">
-        <Label>{formatLabel(propName, propSchema)}</Label>
+        <Label>{meta.label}</Label>
         {#if hasUnsavedChanges(propName)}
           <Badge variant="default" class="text-xs">Unsaved</Badge>
         {:else if hasUserOverride(propName)}
@@ -387,8 +407,8 @@
           }
         }}
       />
-      {#if propSchema.description}
-        <p class="text-sm text-muted-foreground">{propSchema.description}</p>
+      {#if meta.description}
+        <p class="text-sm text-muted-foreground">{meta.description}</p>
       {/if}
       {#if propSchema.minimum !== undefined || propSchema.maximum !== undefined}
         <p class="text-xs text-muted-foreground">
@@ -409,7 +429,7 @@
     {:else}
       <!-- String: Input -->
       <div class="flex items-center gap-2">
-        <Label>{formatLabel(propName, propSchema)}</Label>
+        <Label>{meta.label}</Label>
         {#if hasUnsavedChanges(propName)}
           <Badge variant="default" class="text-xs">Unsaved</Badge>
         {:else if hasUserOverride(propName)}
@@ -436,8 +456,8 @@
         pattern={propSchema.pattern}
         oninput={(e) => setPropertyValue(propName, e.currentTarget.value)}
       />
-      {#if propSchema.description}
-        <p class="text-sm text-muted-foreground">{propSchema.description}</p>
+      {#if meta.description}
+        <p class="text-sm text-muted-foreground">{meta.description}</p>
       {/if}
       {#if propSchema["x-envVar"]}
         <p class="text-xs text-muted-foreground/70">
@@ -503,24 +523,8 @@
     </Collapsible.Root>
   {/if}
 
-  <!-- Save Configuration Button -->
-  <div class="flex justify-end">
-    <Button
-      onclick={() => handleSaveConfiguration(configuration)}
-      disabled={isSaving}
-    >
-      {#if isSaving}
-        <Loader2 class="mr-2 h-4 w-4 animate-spin" />
-        Saving...
-      {:else}
-        <Save class="mr-2 h-4 w-4" />
-        Save Configuration
-      {/if}
-    </Button>
-  </div>
-
-  <!-- Secrets Section -->
-  {#if secretFields.length > 0}
+  <!-- Credentials Section -->
+  {#if secretFields.length > 0 || credentialFields.length > 0}
     <Separator class="my-6" />
 
     <Card>
@@ -542,9 +546,16 @@
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-4">
+        {#each credentialFields as { name, schema: propSchema }, i (name)}
+          {@render propertyField(name, propSchema)}
+          {#if i < credentialFields.length - 1 || secretFields.length > 0}
+            <Separator />
+          {/if}
+        {/each}
         {#each secretFields as { name, schema: propSchema }, i (name)}
+          {@const secretMeta = getPropertyMeta(name)}
           <div class="space-y-2">
-            <Label>{formatLabel(name, propSchema)}</Label>
+            <Label>{secretMeta.label}</Label>
             <div class="flex gap-2">
               <Input
                 type={visibleSecrets.has(name) ? "text" : "password"}
@@ -565,9 +576,9 @@
                 {/if}
               </Button>
             </div>
-            {#if propSchema.description}
+            {#if secretMeta.description}
               <p class="text-sm text-muted-foreground">
-                {propSchema.description}
+                {secretMeta.description}
               </p>
             {/if}
             {#if propSchema["x-envVar"]}
@@ -585,21 +596,26 @@
       </CardContent>
     </Card>
 
-    <!-- Save Secrets Button -->
-    <div class="flex justify-end">
-      <Button
-        onclick={handleSaveSecrets}
-        disabled={isSaving}
-        variant="secondary"
-      >
-        {#if isSaving}
-          <Loader2 class="mr-2 h-4 w-4 animate-spin" />
-          Saving...
-        {:else}
-          <Save class="mr-2 h-4 w-4" />
-          Update Credentials
-        {/if}
-      </Button>
+  {/if}
+
+  <!-- Sticky Save Bar -->
+  {#if hasAnyUnsavedChanges}
+    <div class="sticky bottom-0 -mx-6 border-t bg-background px-6 py-4 flex items-center justify-between gap-4">
+      <p class="text-sm text-muted-foreground">You have unsaved changes</p>
+      <div class="flex gap-2">
+        <Button variant="outline" onclick={handleCancel} disabled={isSaving}>
+          Cancel
+        </Button>
+        <Button onclick={handleSave} disabled={isSaving}>
+          {#if isSaving}
+            <Loader2 class="mr-2 h-4 w-4 animate-spin" />
+            Saving...
+          {:else}
+            <Save class="mr-2 h-4 w-4" />
+            Save
+          {/if}
+        </Button>
+      </div>
     </div>
   {/if}
 </div>

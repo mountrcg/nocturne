@@ -1,20 +1,20 @@
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Repositories;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Data.Mappers;
-using Nocturne.Infrastructure.Data.Repositories;
 
 namespace Nocturne.API.Services;
 
 /// <summary>
-/// Domain service for StateSpan operations with temp basal translation
+/// Domain service for StateSpan operations
 /// </summary>
 public class StateSpanService : IStateSpanService
 {
-    private readonly StateSpanRepository _repository;
+    private readonly IStateSpanRepository _repository;
     private readonly ILogger<StateSpanService> _logger;
 
     public StateSpanService(
-        StateSpanRepository repository,
+        IStateSpanRepository repository,
         ILogger<StateSpanService> logger)
     {
         _repository = repository;
@@ -25,8 +25,8 @@ public class StateSpanService : IStateSpanService
     public async Task<IEnumerable<StateSpan>> GetStateSpansAsync(
         StateSpanCategory? category = null,
         string? state = null,
-        long? from = null,
-        long? to = null,
+        DateTime? from = null,
+        DateTime? to = null,
         string? source = null,
         bool? active = null,
         int count = 100,
@@ -84,68 +84,6 @@ public class StateSpanService : IStateSpanService
             id, stateSpan.Category);
 
         return await _repository.UpdateStateSpanAsync(id, stateSpan, cancellationToken);
-    }
-
-    /// <inheritdoc />
-    public async Task<IEnumerable<Treatment>> GetBasalDeliveriesAsTreatmentsAsync(
-        long? from = null,
-        long? to = null,
-        int count = 100,
-        int skip = 0,
-        CancellationToken cancellationToken = default)
-    {
-        _logger.LogDebug(
-            "Getting basal deliveries as treatments with from: {From}, to: {To}, count: {Count}, skip: {Skip}",
-            from, to, count, skip);
-
-        // Get BasalDelivery StateSpans from repository
-        var stateSpans = await _repository.GetStateSpansAsync(
-            category: StateSpanCategory.BasalDelivery,
-            from: from,
-            to: to,
-            count: count,
-            skip: skip,
-            cancellationToken: cancellationToken);
-
-        // Convert each StateSpan to a Treatment using the mapper
-        var treatments = BasalDeliveryStateSpanToTreatmentMapper.ToTreatments(stateSpans).ToList();
-
-        _logger.LogDebug("Converted {Count} basal delivery state spans to treatments", treatments.Count);
-
-        return treatments;
-    }
-
-    /// <inheritdoc />
-    public async Task<StateSpan> CreateBasalDeliveryFromTreatmentAsync(
-        Treatment treatment,
-        CancellationToken cancellationToken = default)
-    {
-        _logger.LogDebug(
-            "Creating basal delivery from treatment with ID: {Id}, EventType: {EventType}",
-            treatment.Id, treatment.EventType);
-
-        // Convert Treatment to StateSpan using the mapper
-        var stateSpan = TreatmentStateSpanMapper.ToBasalDeliveryStateSpan(treatment);
-
-        if (stateSpan == null)
-        {
-            _logger.LogWarning(
-                "Treatment with ID {Id} is not a temp basal treatment (EventType: {EventType})",
-                treatment.Id, treatment.EventType);
-
-            throw new ArgumentException(
-                $"Treatment with EventType '{treatment.EventType}' is not a valid temp basal treatment",
-                nameof(treatment));
-        }
-
-        // Upsert the StateSpan
-        var result = await _repository.UpsertStateSpanAsync(stateSpan, cancellationToken);
-
-        _logger.LogDebug(
-            "Created basal delivery state span with ID: {Id} from treatment",
-            result.Id);
-
-        return result;
     }
 
     #region Activity Compatibility Methods

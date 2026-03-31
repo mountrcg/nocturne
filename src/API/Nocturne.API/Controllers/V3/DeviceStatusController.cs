@@ -1,9 +1,10 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Nocturne.API.Attributes;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
 
 namespace Nocturne.API.Controllers.V3;
 
@@ -13,19 +14,21 @@ namespace Nocturne.API.Controllers.V3;
 /// </summary>
 [ApiController]
 [Route("api/v3/[controller]")]
+[Authorize]
 public class DeviceStatusController : BaseV3Controller<DeviceStatus>
 {
+    private readonly IDeviceStatusRepository _deviceStatuses;
     private readonly IDeviceStatusService _deviceStatusService;
 
     public DeviceStatusController(
+        IDeviceStatusRepository deviceStatuses,
         IDeviceStatusService deviceStatusService,
-        IPostgreSqlService postgreSqlService,
-        IDataFormatService dataFormatService,
         IDocumentProcessingService documentProcessingService,
         ILogger<DeviceStatusController> logger
     )
-        : base(postgreSqlService, dataFormatService, documentProcessingService, logger)
+        : base(documentProcessingService, logger)
     {
+        _deviceStatuses = deviceStatuses;
         _deviceStatusService = deviceStatusService;
     }
 
@@ -34,6 +37,7 @@ public class DeviceStatusController : BaseV3Controller<DeviceStatus>
     /// </summary>
     /// <returns>V3 device status collection response</returns>
     [HttpGet]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/devicestatus")]
     [ProducesResponseType(typeof(V3CollectionResponse<object>), 200)]
     [ProducesResponseType(typeof(V3ErrorResponse), 400)]
@@ -64,7 +68,7 @@ public class DeviceStatusController : BaseV3Controller<DeviceStatus>
 
             // Get device status using existing backend with V3 parameters
             var deviceStatusListRaw =
-                await _postgreSqlService.GetDeviceStatusWithAdvancedFilterAsync(
+                await _deviceStatuses.GetDeviceStatusWithAdvancedFilterAsync(
                     parameters.Limit,
                     parameters.Offset,
                     findQuery,
@@ -117,6 +121,7 @@ public class DeviceStatusController : BaseV3Controller<DeviceStatus>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Single device status record in V3 format</returns>
     [HttpGet("{id}")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/devicestatus/{id}")]
     [ProducesResponseType(typeof(DeviceStatus), 200)]
     [ProducesResponseType(typeof(V3ErrorResponse), 404)]
@@ -221,7 +226,7 @@ public class DeviceStatusController : BaseV3Controller<DeviceStatus>
                 var single = recordsList[0];
                 if (!string.IsNullOrEmpty(single.Id))
                 {
-                    var existing = await _postgreSqlService.GetDeviceStatusByIdAsync(
+                    var existing = await _deviceStatuses.GetDeviceStatusByIdAsync(
                         single.Id,
                         cancellationToken
                     );
@@ -381,7 +386,7 @@ public class DeviceStatusController : BaseV3Controller<DeviceStatus>
 
         try
         {
-            var deleted = await _postgreSqlService.DeleteDeviceStatusAsync(id, cancellationToken);
+            var deleted = await _deviceStatuses.DeleteDeviceStatusAsync(id, cancellationToken);
 
             if (!deleted)
             {
@@ -407,6 +412,7 @@ public class DeviceStatusController : BaseV3Controller<DeviceStatus>
     /// Get device status records modified since a given timestamp (for AAPS incremental sync)
     /// </summary>
     [HttpGet("history/{lastModified:long}")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/devicestatus/history/{lastModified}")]
     [ProducesResponseType(typeof(object), 200)]
     [ProducesResponseType(500)]
@@ -426,7 +432,7 @@ public class DeviceStatusController : BaseV3Controller<DeviceStatus>
         {
             limit = Math.Min(Math.Max(limit, 1), 1000);
 
-            var deviceStatuses = await _postgreSqlService.GetDeviceStatusModifiedSinceAsync(
+            var deviceStatuses = await _deviceStatuses.GetDeviceStatusModifiedSinceAsync(
                 lastModified,
                 limit,
                 cancellationToken
@@ -622,7 +628,7 @@ public class DeviceStatusController : BaseV3Controller<DeviceStatus>
     {
         try
         {
-            return await _postgreSqlService.CountDeviceStatusAsync(findQuery, cancellationToken);
+            return await _deviceStatuses.CountDeviceStatusAsync(findQuery, cancellationToken);
         }
         catch (Exception ex)
         {

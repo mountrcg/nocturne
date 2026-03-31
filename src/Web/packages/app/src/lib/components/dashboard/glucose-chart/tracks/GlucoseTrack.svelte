@@ -3,8 +3,9 @@
   import { curveMonotoneX } from "d3";
   import type { ScaleLinear } from "d3-scale";
   import PredictionVisualizations from "../../PredictionVisualizations.svelte";
-  import type { PredictionData } from "$lib/data/predictions.remote";
+  import type { PredictionData } from "$api/predictions.remote";
   import type { PredictionDisplayMode } from "$lib/stores/appearance-store.svelte";
+  import { bg } from "$lib/utils/formatting";
 
   interface GlucoseDataPoint {
     time: Date;
@@ -27,6 +28,8 @@
     predictionDisplayMode: PredictionDisplayMode;
     predictionError: string | null;
     chartXDomain: { from: Date; to: Date };
+    // Point click handler
+    onPointClick?: (data: GlucoseDataPoint) => void;
   }
 
   let {
@@ -43,6 +46,7 @@
     predictionDisplayMode,
     predictionError,
     chartXDomain,
+    onPointClick,
   }: Props = $props();
 
   // Only show points when density is reasonable (less than 0.5 points per pixel)
@@ -61,6 +65,7 @@
   placement="left"
   scale={glucoseAxisScale}
   ticks={5}
+  format={(v) => String(bg(v))}
   tickLabelProps={{ class: "text-xs fill-muted-foreground" }}
 />
 
@@ -110,5 +115,8 @@
     y={(d) => glucoseScale(d.sgv)}
     points
     lines
+    onPointClick={onPointClick
+      ? (_e, { data }) => onPointClick(data)
+      : undefined}
   />
 </ChartClipPath>

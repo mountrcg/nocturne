@@ -12,6 +12,7 @@ using Nocturne.Connectors.Glooko.Mappers;
 using Nocturne.Connectors.Glooko.Models;
 using Nocturne.Core.Constants;
 using Nocturne.Core.Models;
+using Nocturne.Core.Models.V4;
 
 namespace Nocturne.Connectors.Glooko.Services;
 
@@ -21,16 +22,17 @@ namespace Nocturne.Connectors.Glooko.Services;
 /// </summary>
 public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfiguration>
 {
-    private readonly ITreatmentClassificationService _classificationService;
     private readonly GlookoConnectorConfiguration _config;
-    private readonly GlookoEntryMapper _entryMapper;
     private readonly IRateLimitingStrategy _rateLimitingStrategy;
     private readonly IRetryDelayStrategy _retryDelayStrategy;
+    private readonly GlookoProfileMapper _profileMapper;
+    private readonly GlookoSensorGlucoseMapper _sensorGlucoseMapper;
     private readonly GlookoStateSpanMapper _stateSpanMapper;
     private readonly GlookoSystemEventMapper _systemEventMapper;
+    private readonly GlookoTempBasalMapper _tempBasalMapper;
     private readonly GlookoTimeMapper _timeMapper;
     private readonly GlookoAuthTokenProvider _tokenProvider;
-    private readonly GlookoTreatmentMapper _treatmentMapper;
+    private readonly GlookoV4TreatmentMapper _v4TreatmentMapper;
 
     public GlookoConnectorService(
         HttpClient httpClient,
@@ -39,7 +41,6 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
         IRetryDelayStrategy retryDelayStrategy,
         IRateLimitingStrategy rateLimitingStrategy,
         GlookoAuthTokenProvider tokenProvider,
-        ITreatmentClassificationService classificationService,
         IConnectorPublisher? publisher = null
     )
         : base(httpClient, logger, publisher)
@@ -52,18 +53,13 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
             ?? throw new ArgumentNullException(nameof(rateLimitingStrategy));
         _tokenProvider =
             tokenProvider ?? throw new ArgumentNullException(nameof(tokenProvider));
-        _classificationService =
-            classificationService ?? throw new ArgumentNullException(nameof(classificationService));
-        _entryMapper = new GlookoEntryMapper(_config, ConnectorSource, logger);
         _timeMapper = new GlookoTimeMapper(_config, logger);
-        _treatmentMapper = new GlookoTreatmentMapper(
-            ConnectorSource,
-            _classificationService,
-            _timeMapper,
-            logger
-        );
+        _sensorGlucoseMapper = new GlookoSensorGlucoseMapper(_config, ConnectorSource, _timeMapper, logger);
+        _v4TreatmentMapper = new GlookoV4TreatmentMapper(ConnectorSource, _timeMapper, logger);
         _stateSpanMapper = new GlookoStateSpanMapper(ConnectorSource, _timeMapper, logger);
+        _tempBasalMapper = new GlookoTempBasalMapper(ConnectorSource, _timeMapper, logger);
         _systemEventMapper = new GlookoSystemEventMapper(ConnectorSource, _timeMapper, logger);
+        _profileMapper = new GlookoProfileMapper(ConnectorSource, logger);
     }
 
     public override string ServiceName => "Glooko";
@@ -72,7 +68,11 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
     public override List<SyncDataType> SupportedDataTypes =>
     [
         SyncDataType.Glucose,
-        SyncDataType.Treatments
+        SyncDataType.Boluses,
+        SyncDataType.CarbIntake,
+        SyncDataType.StateSpans,
+        SyncDataType.DeviceEvents,
+        SyncDataType.Profiles
     ];
 
     public override async Task<bool> AuthenticateAsync()
@@ -91,7 +91,8 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
     protected override async Task<SyncResult> PerformSyncInternalAsync(
         SyncRequest request,
         GlookoConnectorConfiguration config,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ISyncProgressReporter? progressReporter = null
     )
     {
         var result = new SyncResult
@@ -112,6 +113,12 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
                     return result;
                 }
 
+            // Compute active types: intersection of requested and enabled types
+            if (!request.DataTypes.Any())
+                request.DataTypes = SupportedDataTypes;
+            var enabledTypes = config.GetEnabledDataTypes(SupportedDataTypes);
+            var activeTypes = request.DataTypes.Where(t => enabledTypes.Contains(t)).ToHashSet();
+
             // Glooko fetches everything in one go, so determine the earliest 'From' date needed
             var from = request.From;
 
@@ -125,160 +132,245 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
                 return result;
             }
 
-            // 1. Process Glucose
-            if (request.DataTypes.Contains(SyncDataType.Glucose))
+            // Fetch V3 data once upfront if needed for any data type
+            GlookoV3GraphResponse? v3Data = null;
+            var needsV3Data = _config.UseV3Api && (
+                activeTypes.Contains(SyncDataType.Boluses) ||
+                activeTypes.Contains(SyncDataType.CarbIntake) ||
+                activeTypes.Contains(SyncDataType.StateSpans) ||
+                activeTypes.Contains(SyncDataType.DeviceEvents) ||
+                (_config.V3IncludeCgmBackfill && activeTypes.Contains(SyncDataType.Glucose))
+            );
+
+            if (needsV3Data)
             {
-                var entries = _entryMapper.TransformBatchDataToEntries(batchData).ToList();
-                if (entries.Any())
+                try
                 {
-                    var success = await PublishGlucoseDataInBatchesAsync(
-                        entries,
-                        config,
-                        cancellationToken
+                    _logger.LogInformation(
+                        "[{ConnectorSource}] Fetching additional data from v3 API...",
+                        ConnectorSource
                     );
+                    v3Data = await FetchV3GraphDataAsync(from);
+                }
+                catch (Exception v3Ex)
+                {
+                    _logger.LogWarning(
+                        v3Ex,
+                        "[{ConnectorSource}] V3 API fetch failed, continuing with v2 data only",
+                        ConnectorSource
+                    );
+                }
+            }
+
+            // 1. Process Glucose
+            if (activeTypes.Contains(SyncDataType.Glucose))
+            {
+                var sensorGlucose = _sensorGlucoseMapper.TransformBatchDataToSensorGlucose(batchData).ToList();
+                if (sensorGlucose.Count > 0)
+                {
+                    var success = await PublishSensorGlucoseDataAsync(sensorGlucose, config, cancellationToken);
                     if (success)
                     {
-                        result.ItemsSynced[SyncDataType.Glucose] = entries.Count;
-                        result.LastEntryTimes[SyncDataType.Glucose] = entries.Max(e => e.Date);
+                        result.ItemsSynced[SyncDataType.Glucose] = sensorGlucose.Count;
+                        result.LastEntryTimes[SyncDataType.Glucose] = DateTimeOffset
+                            .FromUnixTimeMilliseconds(sensorGlucose.Max(s => s.Mills)).UtcDateTime;
+                    }
+                }
+
+                // V3 CGM backfill
+                if (_config.V3IncludeCgmBackfill && v3Data != null)
+                {
+                    var v3Glucose = _sensorGlucoseMapper.TransformV3ToSensorGlucose(v3Data, _meterUnits).ToList();
+                    if (v3Glucose.Count > 0)
+                    {
+                        await PublishSensorGlucoseDataAsync(v3Glucose, config, cancellationToken);
+                        _logger.LogInformation(
+                            "[{ConnectorSource}] Published {Count} CGM backfill sensor glucose from v3",
+                            ConnectorSource, v3Glucose.Count);
                     }
                 }
             }
 
-            // 2. Process Treatments
-            if (request.DataTypes.Contains(SyncDataType.Treatments))
+            // 2. Process Treatments (boluses, carb intake)
+            var allBoluses = new List<Bolus>();
+            var allCarbs = new List<CarbIntake>();
+            var allDeviceEvents = new List<DeviceEvent>();
+
+            // Prefer V3 data for boluses/carbs when available (V2 and V3 return
+            // the same records with different shapes, so using both causes duplicates).
+            // V2 standalone Foods have no V3 equivalent, so always include those.
+            if (_config.UseV3Api && v3Data != null)
             {
-                var treatments = _treatmentMapper.TransformBatchDataToTreatments(batchData);
+                var (v3Boluses, v3BolusCarbIntakes) = _v4TreatmentMapper.MapV3Boluses(v3Data);
+                allBoluses.AddRange(v3Boluses);
+                allCarbs.AddRange(v3BolusCarbIntakes);
 
-                // V3 API Integration: Fetch additional data types not available in v2
-                if (_config.UseV3Api)
-                    try
+                // V2 standalone food records have no V3 equivalent
+                var v2Foods = _v4TreatmentMapper.MapFoods(batchData);
+                allCarbs.AddRange(v2Foods);
+
+                var v3DeviceEvents = _v4TreatmentMapper.MapV3DeviceEvents(v3Data);
+                allDeviceEvents.AddRange(v3DeviceEvents);
+            }
+            else
+            {
+                var (v2Boluses, v2Carbs) = _v4TreatmentMapper.MapBatchData(batchData);
+                allBoluses.AddRange(v2Boluses);
+                allCarbs.AddRange(v2Carbs);
+            }
+
+            // Publish boluses
+            if (activeTypes.Contains(SyncDataType.Boluses) && allBoluses.Count > 0)
+            {
+                var success = await PublishBolusDataAsync(allBoluses, config, cancellationToken);
+                if (success)
+                {
+                    result.ItemsSynced[SyncDataType.Boluses] = allBoluses.Count;
+                    _logger.LogInformation("[{ConnectorSource}] Published {Count} boluses", ConnectorSource, allBoluses.Count);
+                }
+            }
+
+            // Publish carb intakes
+            if (activeTypes.Contains(SyncDataType.CarbIntake) && allCarbs.Count > 0)
+            {
+                var success = await PublishCarbIntakeDataAsync(allCarbs, config, cancellationToken);
+                if (success)
+                {
+                    result.ItemsSynced[SyncDataType.CarbIntake] = allCarbs.Count;
+                    _logger.LogInformation("[{ConnectorSource}] Published {Count} carb intakes", ConnectorSource, allCarbs.Count);
+                }
+            }
+
+            // 3. Process DeviceEvents (reservoir/site changes + pump alarms from V3)
+            if (activeTypes.Contains(SyncDataType.DeviceEvents))
+            {
+                var deviceEventCount = 0;
+
+                if (allDeviceEvents.Count > 0)
+                {
+                    var success = await PublishDeviceEventDataAsync(allDeviceEvents, config, cancellationToken);
+                    if (success)
                     {
-                        _logger.LogInformation(
-                            "[{ConnectorSource}] Fetching additional data from v3 API...",
-                            ConnectorSource
-                        );
-                        var v3Data = await FetchV3GraphDataAsync(from);
-                        if (v3Data != null)
+                        deviceEventCount += allDeviceEvents.Count;
+                        _logger.LogInformation("[{ConnectorSource}] Published {Count} device events", ConnectorSource, allDeviceEvents.Count);
+                    }
+                }
+
+                if (v3Data != null)
+                {
+                    var systemEvents = _systemEventMapper.TransformV3ToSystemEvents(v3Data);
+                    if (systemEvents.Any())
+                    {
+                        var eventSuccess = await PublishSystemEventDataAsync(systemEvents, config, cancellationToken);
+                        if (eventSuccess)
                         {
-                            var v3Treatments = _treatmentMapper.TransformV3ToTreatments(v3Data);
-                            // Add v3 treatments that don't already exist (based on Id)
-                            var existingIds = treatments.Select(t => t.Id).ToHashSet();
-                            var newV3Treatments = v3Treatments
-                                .Where(t => !existingIds.Contains(t.Id))
-                                .ToList();
-                            treatments.AddRange(newV3Treatments);
-                            _logger.LogInformation(
-                                "[{ConnectorSource}] Added {Count} unique treatments from v3 API",
-                                ConnectorSource,
-                                newV3Treatments.Count
-                            );
-
-                            // Optionally add CGM backfill entries
-                            if (
-                                _config.V3IncludeCgmBackfill
-                                && request.DataTypes.Contains(SyncDataType.Glucose)
-                            )
-                            {
-                                var v3Entries = _entryMapper
-                                    .TransformV3ToEntries(v3Data, _meterUnits)
-                                    .ToList();
-                                if (v3Entries.Any())
-                                {
-                                    await PublishGlucoseDataInBatchesAsync(
-                                        v3Entries,
-                                        config,
-                                        cancellationToken
-                                    );
-                                    _logger.LogInformation(
-                                        "[{ConnectorSource}] Published {Count} CGM backfill entries from v3",
-                                        ConnectorSource,
-                                        v3Entries.Count
-                                    );
-                                }
-                            }
-
-                            // Transform and publish StateSpans (pump modes, connectivity, profiles)
-                            var stateSpans = _stateSpanMapper.TransformV3ToStateSpans(v3Data);
-                            if (stateSpans.Any())
-                            {
-                                var stateSpanSuccess = await PublishStateSpanDataAsync(
-                                    stateSpans,
-                                    config,
-                                    cancellationToken
-                                );
-                                if (stateSpanSuccess)
-                                    _logger.LogInformation(
-                                        "[{ConnectorSource}] Published {Count} state spans from v3",
-                                        ConnectorSource,
-                                        stateSpans.Count
-                                    );
-                            }
-
-                            // Transform and publish SystemEvents (alarms, warnings)
-                            var systemEvents = _systemEventMapper.TransformV3ToSystemEvents(v3Data);
-                            if (systemEvents.Any())
-                            {
-                                var eventSuccess = await PublishSystemEventDataAsync(
-                                    systemEvents,
-                                    config,
-                                    cancellationToken
-                                );
-                                if (eventSuccess)
-                                    _logger.LogInformation(
-                                        "[{ConnectorSource}] Published {Count} system events from v3",
-                                        ConnectorSource,
-                                        systemEvents.Count
-                                    );
-                            }
+                            deviceEventCount += systemEvents.Count;
+                            _logger.LogInformation("[{ConnectorSource}] Published {Count} system events from v3", ConnectorSource, systemEvents.Count);
                         }
                     }
-                    catch (Exception v3Ex)
+                }
+
+                if (deviceEventCount > 0)
+                    result.ItemsSynced[SyncDataType.DeviceEvents] = deviceEventCount;
+            }
+
+            // 4. Process StateSpans (pump modes, profiles) and TempBasals
+            if (activeTypes.Contains(SyncDataType.StateSpans))
+            {
+                var tempBasalCount = 0;
+
+                // V3 state spans (pump modes, profiles)
+                if (v3Data != null)
+                {
+                    var stateSpans = _stateSpanMapper.TransformV3ToStateSpans(v3Data);
+                    if (stateSpans.Any())
                     {
-                        _logger.LogWarning(
-                            v3Ex,
-                            "[{ConnectorSource}] V3 API fetch failed, continuing with v2 data only",
-                            ConnectorSource
-                        );
+                        var stateSpanSuccess = await PublishStateSpanDataAsync(stateSpans, config, cancellationToken);
+                        if (stateSpanSuccess)
+                            _logger.LogInformation(
+                                "[{ConnectorSource}] Published {Count} state spans from v3",
+                                ConnectorSource, stateSpans.Count);
                     }
 
-                // Transform and publish V2 StateSpans (temp basals, suspend basals)
-                // These come from the V2 API which is always fetched
+                    // V3 temp basals
+                    var v3TempBasals = _tempBasalMapper.TransformV3ToTempBasals(v3Data);
+                    if (v3TempBasals.Any())
+                    {
+                        var tbSuccess = await PublishTempBasalDataAsync(v3TempBasals, config, cancellationToken);
+                        if (tbSuccess)
+                        {
+                            tempBasalCount += v3TempBasals.Count;
+                            _logger.LogInformation(
+                                "[{ConnectorSource}] Published {Count} temp basals from v3",
+                                ConnectorSource, v3TempBasals.Count);
+                        }
+                    }
+                }
+
+                // V2 state spans (suspend pump modes)
                 var v2StateSpans = _stateSpanMapper.TransformV2ToStateSpans(batchData);
                 if (v2StateSpans.Any())
                 {
-                    var v2StateSpanSuccess = await PublishStateSpanDataAsync(
-                        v2StateSpans,
-                        config,
-                        cancellationToken
-                    );
+                    var v2StateSpanSuccess = await PublishStateSpanDataAsync(v2StateSpans, config, cancellationToken);
                     if (v2StateSpanSuccess)
                         _logger.LogInformation(
                             "[{ConnectorSource}] Published {Count} state spans from v2",
-                            ConnectorSource,
-                            v2StateSpans.Count
-                        );
+                            ConnectorSource, v2StateSpans.Count);
                 }
 
-                if (treatments.Any())
+                // V2 temp basals
+                var v2TempBasals = _tempBasalMapper.TransformV2ToTempBasals(batchData);
+                if (v2TempBasals.Any())
                 {
-                    var coreTreatments = treatments.ToList();
-                    var success = await PublishTreatmentDataInBatchesAsync(
-                        coreTreatments,
-                        config,
-                        cancellationToken
-                    );
-
-                    if (success)
+                    var v2TbSuccess = await PublishTempBasalDataAsync(v2TempBasals, config, cancellationToken);
+                    if (v2TbSuccess)
                     {
-                        result.ItemsSynced[SyncDataType.Treatments] = coreTreatments.Count;
-
-                        // Parse timestamp safely
-                        var maxDateStr = treatments.Max(t => t.CreatedAt);
-                        if (DateTime.TryParse(maxDateStr, out var maxDate))
-                            result.LastEntryTimes[SyncDataType.Treatments] = maxDate;
+                        tempBasalCount += v2TempBasals.Count;
+                        _logger.LogInformation(
+                            "[{ConnectorSource}] Published {Count} temp basals from v2",
+                            ConnectorSource, v2TempBasals.Count);
                     }
                 }
+
+                if (tempBasalCount > 0)
+                    result.ItemsSynced[SyncDataType.StateSpans] = tempBasalCount;
             }
+
+            // 5. Process Profiles (from V3 devices_and_settings)
+            if (activeTypes.Contains(SyncDataType.Profiles))
+                try
+                {
+                    var deviceSettings = await FetchV3DeviceSettingsAsync();
+                    if (deviceSettings != null)
+                    {
+                        var profiles = _profileMapper.TransformDeviceSettingsToProfiles(deviceSettings);
+                        if (profiles.Any())
+                        {
+                            var profileSuccess = await PublishProfileDataAsync(
+                                profiles,
+                                config,
+                                cancellationToken
+                            );
+                            if (profileSuccess)
+                            {
+                                result.ItemsSynced[SyncDataType.Profiles] = profiles.Count;
+                                _logger.LogInformation(
+                                    "[{ConnectorSource}] Published {Count} profiles from device settings",
+                                    ConnectorSource,
+                                    profiles.Count
+                                );
+                            }
+                        }
+                    }
+                }
+                catch (Exception profileEx)
+                {
+                    _logger.LogWarning(
+                        profileEx,
+                        "[{ConnectorSource}] Failed to fetch/publish profile data",
+                        ConnectorSource
+                    );
+                }
 
             result.EndTime = DateTime.UtcNow;
             return result;
@@ -294,26 +386,6 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
         }
     }
 
-    public override async Task<IEnumerable<Entry>> FetchGlucoseDataAsync(DateTime? since = null)
-    {
-        var batchData = await FetchBatchDataAsync(since);
-        var entriesList = batchData == null
-            ? []
-            : _entryMapper.TransformBatchDataToEntries(batchData).ToList();
-        _logger.LogInformation(
-            "[{ConnectorSource}] Retrieved {Count} glucose entries from Glooko (since: {Since})",
-            ConnectorSource,
-            entriesList.Count,
-            since?.ToString("yyyy-MM-dd HH:mm:ss") ?? "default lookback"
-        );
-
-        return entriesList;
-    }
-
-    /// <summary>
-    ///     Fetch comprehensive batch data from all Glooko endpoints
-    ///     This matches the legacy implementation's dataFromSession method
-    /// </summary>
     /// <summary>
     ///     Fetch comprehensive batch data from all Glooko endpoints
     ///     This matches the legacy implementation's dataFromSession method
@@ -481,7 +553,7 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
         }
         catch (Exception ex)
         {
-            _logger.LogError($"Error fetching Glooko batch data: {ex.Message}");
+            _logger.LogError(ex, "Error fetching Glooko batch data");
             return null;
         }
     }
@@ -502,7 +574,7 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
     {
         try
         {
-            _logger.LogDebug($"GLOOKO FETCHER LOADING {url}");
+            _logger.LogDebug("GLOOKO FETCHER LOADING {Url}", url);
 
             var request = new HttpRequestMessage(HttpMethod.Get, url);
 
@@ -521,7 +593,6 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
             request.Headers.TryAddWithoutValidation("Connection", "keep-alive");
             request.Headers.TryAddWithoutValidation("Accept-Language", "en-GB,en;q=0.9");
             request.Headers.TryAddWithoutValidation("Cookie", _tokenProvider.SessionCookie);
-            request.Headers.TryAddWithoutValidation("Host", _config.Server);
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "empty");
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-site");
@@ -559,11 +630,11 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
 
             if (response.StatusCode == HttpStatusCode.UnprocessableEntity) // 422
             {
-                _logger.LogWarning($"Rate limited (422) fetching from {url}");
+                _logger.LogWarning("Rate limited (422) fetching from {Url}", url);
                 throw new HttpRequestException("422 UnprocessableEntity - Rate limited");
             }
 
-            _logger.LogWarning($"Failed to fetch from {url}: {response.StatusCode}");
+            _logger.LogWarning("Failed to fetch from {Url}: {StatusCode}", url, response.StatusCode);
             throw new HttpRequestException(
                 $"HTTP {(int)response.StatusCode} {response.StatusCode}"
             );
@@ -575,18 +646,11 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
         }
         catch (Exception ex)
         {
-            _logger.LogError($"Error fetching from {url}: {ex.Message}");
+            _logger.LogError(ex, "Error fetching from {Url}", url);
             throw new HttpRequestException($"Request failed: {ex.Message}", ex);
         }
     }
 
-    /// <summary>
-    ///     Generate a unique ID for a treatment based on its data and timestamp
-    /// </summary>
-    /// <summary>
-    ///     Normalize alarm type strings to standard values
-    ///     Handles various Glooko alarm type formats (different devices may use different naming)
-    /// </summary>
     /// <summary>
     ///     Fetch from Glooko endpoint with retry logic and exponential backoff
     ///     Implements the legacy rate limiting strategy to avoid 422 errors
@@ -606,44 +670,38 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
                 if (result.HasValue) return result;
 
                 // If we get here, the request failed but didn't throw
-                _logger.LogWarning($"Attempt {attempt + 1} failed for {url}");
+                _logger.LogWarning("Attempt {AttemptNumber} failed for {Url}", attempt + 1, url);
             }
             catch (HttpRequestException ex) when (ex.Message.Contains("422"))
             {
                 lastException = ex;
-                _logger.LogWarning($"Rate limited (422) on attempt {attempt + 1} for {url}");
+                _logger.LogWarning("Rate limited (422) on attempt {AttemptNumber} for {Url}", attempt + 1, url);
             }
             catch (HttpRequestException ex)
             {
                 lastException = ex;
-                _logger.LogError($"Attempt {attempt + 1} failed for {url}: {ex.Message}");
+                _logger.LogError(ex, "Attempt {AttemptNumber} failed for {Url}", attempt + 1, url);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Attempt {attempt + 1} failed for {url}: {ex.Message}");
+                _logger.LogError(ex, "Attempt {AttemptNumber} failed for {Url}", attempt + 1, url);
                 lastException = new HttpRequestException($"Request failed: {ex.Message}", ex);
             } // Don't delay after the last attempt
 
             if (attempt < maxRetries - 1)
             {
-                _logger.LogInformation($"Applying retry backoff before retry {attempt + 2}");
+                _logger.LogInformation("Applying retry backoff before retry {RetryNumber}", attempt + 2);
                 await _retryDelayStrategy.ApplyRetryDelayAsync(attempt);
             }
         }
 
-        _logger.LogError($"All {maxRetries} attempts failed for {url}");
+        _logger.LogError("All {MaxRetries} attempts failed for {Url}", maxRetries, url);
 
         // Throw the last exception if we have one, otherwise throw a generic exception
         if (lastException != null) throw lastException;
         throw new HttpRequestException($"All {maxRetries} attempts failed for {url}");
     }
 
-    /// <summary>
-    ///     Get corrected Glooko timestamp. Glooko reports local time as if it were UTC.
-    /// </summary>
-    /// <summary>
-    ///     Get corrected Glooko timestamp from unix seconds.
-    /// </summary>
     private bool IsSessionExpired()
     {
         return string.IsNullOrEmpty(_tokenProvider.SessionCookie);
@@ -784,6 +842,7 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
             "scheduledBasal",
             "temporaryBasal",
             "suspendBasal",
+            "lgsPlgs",
             "profileChange"
         };
 
@@ -797,6 +856,62 @@ public class GlookoConnectorService : BaseConnectorService<GlookoConnectorConfig
                + $"&endDate={endDate:yyyy-MM-ddTHH:mm:ss.fffZ}"
                + $"&{seriesParams}"
                + "&locale=en&insulinTooltips=false&filterBgReadings=false&splitByDay=false";
+    }
+
+    /// <summary>
+    ///     Fetch pump device settings from the v3 devices_and_settings API
+    /// </summary>
+    public async Task<GlookoV3DeviceSettingsResponse?> FetchV3DeviceSettingsAsync()
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(_tokenProvider.SessionCookie))
+                throw new InvalidOperationException(
+                    "Not authenticated with Glooko. Call AuthenticateAsync first."
+                );
+
+            if (_tokenProvider.UserData?.UserLogin?.GlookoCode == null)
+            {
+                _logger.LogWarning("Missing Glooko user code, cannot fetch device settings");
+                return null;
+            }
+
+            var patientCode = _tokenProvider.UserData.UserLogin.GlookoCode;
+            var url = $"/api/v3/devices_and_settings?patient={patientCode}";
+
+            _logger.LogInformation(
+                "[{ConnectorSource}] Fetching device settings from v3 API",
+                ConnectorSource
+            );
+
+            var result = await FetchFromGlookoEndpointWithRetry(url);
+            if (result.HasValue)
+            {
+                var settings = JsonSerializer.Deserialize<GlookoV3DeviceSettingsResponse>(
+                    result.Value.GetRawText()
+                );
+
+                var pumpCount = settings?.DeviceSettings?.Pumps?.Count ?? 0;
+                var snapshotCount = settings?.DeviceSettings?.Pumps?.Values
+                    .Sum(p => p.Count) ?? 0;
+
+                _logger.LogInformation(
+                    "[{ConnectorSource}] Fetched device settings: {PumpCount} pumps, {SnapshotCount} settings snapshots",
+                    ConnectorSource,
+                    pumpCount,
+                    snapshotCount
+                );
+
+                return settings;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching Glooko v3 device settings");
+            return null;
+        }
     }
 
     #endregion

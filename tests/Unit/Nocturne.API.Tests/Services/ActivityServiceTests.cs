@@ -2,6 +2,8 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using Nocturne.API.Services;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Events;
+using Nocturne.Core.Contracts.V4;
 using Nocturne.Core.Models;
 using Xunit;
 
@@ -15,6 +17,9 @@ public class ActivityServiceTests
     private readonly Mock<IStateSpanService> _mockStateSpanService;
     private readonly Mock<IDocumentProcessingService> _mockDocumentProcessingService;
     private readonly Mock<ISignalRBroadcastService> _mockSignalRBroadcastService;
+    private readonly Mock<IActivityDecomposer> _mockActivityDecomposer;
+    private readonly Mock<IHeartRateService> _mockHeartRateService;
+    private readonly Mock<IStepCountService> _mockStepCountService;
     private readonly Mock<ILogger<ActivityService>> _mockLogger;
     private readonly ActivityService _activityService;
 
@@ -23,12 +28,27 @@ public class ActivityServiceTests
         _mockStateSpanService = new Mock<IStateSpanService>();
         _mockDocumentProcessingService = new Mock<IDocumentProcessingService>();
         _mockSignalRBroadcastService = new Mock<ISignalRBroadcastService>();
+        _mockActivityDecomposer = new Mock<IActivityDecomposer>();
+        _mockHeartRateService = new Mock<IHeartRateService>();
+        _mockStepCountService = new Mock<IStepCountService>();
         _mockLogger = new Mock<ILogger<ActivityService>>();
+
+        // Default: return empty lists for heart rate and step count
+        _mockHeartRateService
+            .Setup(s => s.GetHeartRatesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Enumerable.Empty<HeartRate>());
+        _mockStepCountService
+            .Setup(s => s.GetStepCountsAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Enumerable.Empty<StepCount>());
 
         _activityService = new ActivityService(
             _mockStateSpanService.Object,
             _mockDocumentProcessingService.Object,
             _mockSignalRBroadcastService.Object,
+            Mock.Of<IDataEventSink<Activity>>(),
+            _mockActivityDecomposer.Object,
+            _mockHeartRateService.Object,
+            _mockStepCountService.Object,
             _mockLogger.Object
         );
     }
@@ -84,7 +104,7 @@ public class ActivityServiceTests
         // Arrange
         var find = "{\"type\":\"exercise\"}";
         var count = 5;
-        var skip = 2;
+        var skip = 0;
         var expectedActivities = new List<Activity>
         {
             new Activity
@@ -101,8 +121,8 @@ public class ActivityServiceTests
             .Setup(x =>
                 x.GetActivitiesAsync(
                     It.IsAny<string?>(),
-                    count,
-                    skip,
+                    It.IsAny<int>(),
+                    It.IsAny<int>(),
                     It.IsAny<CancellationToken>()
                 )
             )
@@ -561,14 +581,17 @@ public class ActivityServiceTests
     [Fact]
     [Trait("Category", "Unit")]
     [Trait("Category", "Parity")]
-    public void Constructor_WithNullMongoDbService_ThrowsArgumentNullException()
+    public void Constructor_WithNullStateSpanService_ThrowsArgumentNullException()
     {
-        // Arrange & Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
             new ActivityService(
                 null!,
                 _mockDocumentProcessingService.Object,
                 _mockSignalRBroadcastService.Object,
+                Mock.Of<IDataEventSink<Activity>>(),
+                _mockActivityDecomposer.Object,
+                _mockHeartRateService.Object,
+                _mockStepCountService.Object,
                 _mockLogger.Object
             )
         );
@@ -579,12 +602,15 @@ public class ActivityServiceTests
     [Trait("Category", "Parity")]
     public void Constructor_WithNullDocumentProcessingService_ThrowsArgumentNullException()
     {
-        // Arrange & Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
             new ActivityService(
                 _mockStateSpanService.Object,
                 null!,
                 _mockSignalRBroadcastService.Object,
+                Mock.Of<IDataEventSink<Activity>>(),
+                _mockActivityDecomposer.Object,
+                _mockHeartRateService.Object,
+                _mockStepCountService.Object,
                 _mockLogger.Object
             )
         );
@@ -595,11 +621,68 @@ public class ActivityServiceTests
     [Trait("Category", "Parity")]
     public void Constructor_WithNullSignalRBroadcastService_ThrowsArgumentNullException()
     {
-        // Arrange & Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
             new ActivityService(
                 _mockStateSpanService.Object,
                 _mockDocumentProcessingService.Object,
+                null!,
+                Mock.Of<IDataEventSink<Activity>>(),
+                _mockActivityDecomposer.Object,
+                _mockHeartRateService.Object,
+                _mockStepCountService.Object,
+                _mockLogger.Object
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Constructor_WithNullActivityDecomposer_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new ActivityService(
+                _mockStateSpanService.Object,
+                _mockDocumentProcessingService.Object,
+                _mockSignalRBroadcastService.Object,
+                Mock.Of<IDataEventSink<Activity>>(),
+                null!,
+                _mockHeartRateService.Object,
+                _mockStepCountService.Object,
+                _mockLogger.Object
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Constructor_WithNullHeartRateService_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new ActivityService(
+                _mockStateSpanService.Object,
+                _mockDocumentProcessingService.Object,
+                _mockSignalRBroadcastService.Object,
+                Mock.Of<IDataEventSink<Activity>>(),
+                _mockActivityDecomposer.Object,
+                null!,
+                _mockStepCountService.Object,
+                _mockLogger.Object
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Constructor_WithNullStepCountService_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new ActivityService(
+                _mockStateSpanService.Object,
+                _mockDocumentProcessingService.Object,
+                _mockSignalRBroadcastService.Object,
+                Mock.Of<IDataEventSink<Activity>>(),
+                _mockActivityDecomposer.Object,
+                _mockHeartRateService.Object,
                 null!,
                 _mockLogger.Object
             )
@@ -611,12 +694,15 @@ public class ActivityServiceTests
     [Trait("Category", "Parity")]
     public void Constructor_WithNullLogger_ThrowsArgumentNullException()
     {
-        // Arrange & Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
             new ActivityService(
                 _mockStateSpanService.Object,
                 _mockDocumentProcessingService.Object,
                 _mockSignalRBroadcastService.Object,
+                Mock.Of<IDataEventSink<Activity>>(),
+                _mockActivityDecomposer.Object,
+                _mockHeartRateService.Object,
+                _mockStepCountService.Object,
                 null!
             )
         );

@@ -1,107 +1,104 @@
+using Nocturne.Connectors.MyLife.Mappers.Constants;
 using Nocturne.Connectors.MyLife.Mappers.Handlers;
 using Nocturne.Connectors.MyLife.Models;
-using Nocturne.Core.Models;
+using Nocturne.Core.Models.V4;
 
 namespace Nocturne.Connectors.MyLife.Mappers;
 
 /// <summary>
-///     Mapper for converting MyLife events to StateSpans.
-///     Focuses on BasalDelivery StateSpans for pump-confirmed basal delivery tracking.
+///     Mapper for converting MyLife events to TempBasal records.
+///     Produces TempBasal V4 domain model objects for basal delivery tracking.
 /// </summary>
 internal sealed class MyLifeStateSpanMapper
 {
     private static readonly IReadOnlyList<IMyLifeStateSpanHandler> Handlers =
     [
-        new BasalRateTreatmentHandler(),
-        new BasalAmountTreatmentHandler(),
-        new TempBasalTreatmentHandler()
+        new BasalRateHandler(),
+        new BasalAmountHandler(),
+        new TempBasalHandler(),
     ];
 
     /// <summary>
-    ///     Maps MyLife events to StateSpans, primarily BasalDelivery StateSpans.
+    ///     Maps MyLife events to TempBasal records for basal delivery.
     /// </summary>
     /// <param name="events">The MyLife events to process</param>
     /// <param name="enableTempBasalConsolidation">Whether to enable temp basal consolidation</param>
     /// <param name="tempBasalConsolidationWindowMinutes">The window for temp basal consolidation</param>
-    /// <returns>A collection of StateSpans</returns>
-    internal static IEnumerable<StateSpan> MapStateSpans(
+    /// <returns>A collection of TempBasal records</returns>
+    internal static IEnumerable<TempBasal> MapTempBasals(
         IEnumerable<MyLifeEvent> events,
         bool enableTempBasalConsolidation,
-        int tempBasalConsolidationWindowMinutes)
+        int tempBasalConsolidationWindowMinutes
+    )
     {
         // Create a context - we reuse the treatment context for consistency
         // with the temp basal consolidation logic
-        var context = MyLifeTreatmentContext.Create(
-            events,
-            false,
+        var eventList = events.ToList();
+        var context = MyLifeContext.Create(
+            eventList,
             false,
             enableTempBasalConsolidation,
-            tempBasalConsolidationWindowMinutes);
+            tempBasalConsolidationWindowMinutes
+        );
 
-        var stateSpans = new List<StateSpan>();
-        foreach (var ev in events)
+        // When BasalRate (17) events exist, skip Basal (22) events to avoid
+        // double-counting. BasalRate events are the authoritative rate source
+        // for algorithm pumps (CamAPS); Basal events are redundant delivery
+        // confirmations that overlap with the same time periods.
+        var hasBasalRateEvents = eventList.Any(e =>
+            !e.Deleted && e.EventTypeId == MyLifeEventType.BasalRate);
+
+        var tempBasals = new List<TempBasal>();
+        foreach (var ev in eventList)
         {
-            if (ev.Deleted) continue;
+            if (ev.Deleted)
+                continue;
+
+            // Skip Basal amount events when BasalRate events are present
+            if (hasBasalRateEvents && ev.EventTypeId == MyLifeEventType.Basal)
+                continue;
 
             foreach (var handler in Handlers)
             {
-                if (!handler.CanHandleStateSpan(ev)) continue;
+                if (!handler.CanHandleStateSpan(ev))
+                    continue;
 
-                stateSpans.AddRange(handler.HandleStateSpan(ev, context));
+                tempBasals.AddRange(handler.HandleStateSpan(ev, context));
                 break;
             }
         }
 
-        // Post-process to set endMills on consecutive BasalDelivery spans
-        CalculateBasalDeliveryEndTimes(stateSpans);
+        // Post-process to set EndTimestamp on consecutive TempBasal records
+        CalculateTempBasalEndTimes(tempBasals);
 
-        // Return sorted by StartMills for consistent ordering
-        return stateSpans.OrderBy(s => s.StartMills);
+        // Return sorted by StartTimestamp for consistent ordering
+        return tempBasals.OrderBy(t => t.StartTimestamp);
     }
 
     /// <summary>
-    ///     Calculate end times for BasalDelivery StateSpans based on consecutive records.
+    ///     Calculate end times for TempBasal records based on consecutive records.
     ///     When a new basal delivery starts, the previous one ends.
     /// </summary>
-    private static void CalculateBasalDeliveryEndTimes(List<StateSpan> stateSpans)
+    private static void CalculateTempBasalEndTimes(List<TempBasal> tempBasals)
     {
-        // Get all BasalDelivery spans without an end time, sorted by start time
-        var basalSpans = stateSpans
-            .Where(s =>
-                s.Category == StateSpanCategory.BasalDelivery
-                && !s.EndMills.HasValue
-                && s.StartMills > 0)
-            .OrderBy(s => s.StartMills)
+        // Get all TempBasal records without an end time, sorted by start time
+        var openRecords = tempBasals
+            .Where(t => !t.EndTimestamp.HasValue && t.StartTimestamp > DateTime.MinValue)
+            .OrderBy(t => t.StartTimestamp)
             .ToList();
 
-        if (basalSpans.Count == 0) return;
+        if (openRecords.Count == 0)
+            return;
 
-        // Set each span's end time to the start of the next span
-        for (var i = 0; i < basalSpans.Count - 1; i++)
+        // Set each record's end time to the start of the next record
+        for (var i = 0; i < openRecords.Count - 1; i++)
         {
-            var current = basalSpans[i];
-            var next = basalSpans[i + 1];
+            var current = openRecords[i];
+            var next = openRecords[i + 1];
 
-            // Set the end time to the start of the next span
-            current.EndMills = next.StartMills;
-
-            // Calculate the duration and add it to metadata
-            var durationMs = next.StartMills - current.StartMills;
-            var durationMinutes = durationMs / 60000.0;
-
-            // Add computed duration to metadata
-            current.Metadata ??= new Dictionary<string, object>();
-            current.Metadata["durationMinutes"] = durationMinutes;
-
-            // If we have a rate, calculate insulin delivered
-            if (current.Metadata.TryGetValue("rate", out var rateObj) && rateObj is double rate)
-            {
-                // Rate is U/h, duration is in minutes
-                var insulinDelivered = rate * durationMinutes / 60.0;
-                current.Metadata["insulinDelivered"] = Math.Round(insulinDelivered, 4);
-            }
+            current.EndTimestamp = next.StartTimestamp;
         }
 
-        // The last span remains open (no end time) - it's the current active state
+        // The last record remains open (no end time) - it's the current active state
     }
 }

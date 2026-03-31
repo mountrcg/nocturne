@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Nocturne.Core.Contracts.Repositories;
 using Nocturne.Core.Models;
-using Nocturne.Infrastructure.Data.Repositories;
 
 namespace Nocturne.API.Controllers.V4;
 
@@ -13,9 +13,9 @@ namespace Nocturne.API.Controllers.V4;
 [Authorize]
 public class SystemEventsController : ControllerBase
 {
-    private readonly SystemEventRepository _repository;
+    private readonly ISystemEventRepository _repository;
 
-    public SystemEventsController(SystemEventRepository repository)
+    public SystemEventsController(ISystemEventRepository repository)
     {
         _repository = repository;
     }
@@ -27,15 +27,17 @@ public class SystemEventsController : ControllerBase
     public async Task<ActionResult<IEnumerable<SystemEvent>>> GetSystemEvents(
         [FromQuery] SystemEventType? type = null,
         [FromQuery] SystemEventCategory? category = null,
-        [FromQuery] long? from = null,
-        [FromQuery] long? to = null,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null,
         [FromQuery] string? source = null,
         [FromQuery] int count = 100,
         [FromQuery] int skip = 0,
         CancellationToken cancellationToken = default)
     {
+        var fromMills = from.HasValue ? new DateTimeOffset(from.Value, TimeSpan.Zero).ToUnixTimeMilliseconds() : (long?)null;
+        var toMills = to.HasValue ? new DateTimeOffset(to.Value, TimeSpan.Zero).ToUnixTimeMilliseconds() : (long?)null;
         var events = await _repository.GetSystemEventsAsync(
-            type, category, from, to, source, count, skip, cancellationToken);
+            type, category, fromMills, toMills, source, count, skip, cancellationToken);
         return Ok(events);
     }
 

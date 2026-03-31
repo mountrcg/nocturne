@@ -1,7 +1,9 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Nocturne.API.Attributes;
 using Nocturne.API.Extensions;
+using Nocturne.API.Services;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Contracts.Alerts;
 using Nocturne.Core.Models;
@@ -15,10 +17,10 @@ namespace Nocturne.API.Controllers.V1;
 /// </summary>
 [ApiController]
 [Route("api/v1/[controller]")]
+[Authorize]
 public class EntriesController : ControllerBase
 {
     private readonly IEntryService _entryService;
-    private readonly IDataFormatService _dataFormatService;
     private readonly IDocumentProcessingService _documentProcessingService;
     private readonly IProcessingStatusService _processingStatusService;
     private readonly IAlertOrchestrator _alertOrchestrator;
@@ -26,7 +28,6 @@ public class EntriesController : ControllerBase
 
     public EntriesController(
         IEntryService entryService,
-        IDataFormatService dataFormatService,
         IDocumentProcessingService documentProcessingService,
         IProcessingStatusService processingStatusService,
         IAlertOrchestrator alertOrchestrator,
@@ -34,7 +35,6 @@ public class EntriesController : ControllerBase
     )
     {
         _entryService = entryService;
-        _dataFormatService = dataFormatService;
         _documentProcessingService = documentProcessingService;
         _processingStatusService = processingStatusService;
         _alertOrchestrator = alertOrchestrator;
@@ -48,7 +48,9 @@ public class EntriesController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The most recent glucose entry, or empty array if no entries exist</returns>
     [HttpGet("current")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v1/entries/current")]
+    [ResponseCache(Duration = 60, VaryByHeader = "If-Modified-Since")]
     [ProducesResponseType(typeof(Entry[]), 200)]
     [ProducesResponseType(typeof(Entry[]), 304)] // Not Modified response
     public async Task<ActionResult<Entry[]>> GetCurrentEntry(
@@ -141,6 +143,7 @@ public class EntriesController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Entry or entries matching the specification</returns>
     [HttpGet("{spec}")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v1/entries/{spec}")]
     [ProducesResponseType(typeof(Entry[]), 200)]
     [ProducesResponseType(typeof(Entry[]), 304)] // Not Modified response
@@ -279,7 +282,9 @@ public class EntriesController : ControllerBase
     /// <param name="format">Output format (json, csv, tsv, txt)</param>
     /// <returns>Array of entries matching the criteria</returns>
     [HttpGet]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v1/entries")]
+    [ResponseCache(Duration = 60, VaryByQueryKeys = new[] { "*" }, VaryByHeader = "If-Modified-Since")]
     [ProducesResponseType(typeof(Entry[]), 200)]
     [ProducesResponseType(typeof(Entry[]), 304)] // Not Modified response
     public async Task<ActionResult> GetEntries(
@@ -457,11 +462,11 @@ public class EntriesController : ControllerBase
             {
                 try
                 {
-                    var formattedData = _dataFormatService.FormatEntries(
+                    var formattedData = DataFormatService.FormatEntries(
                         entriesArray,
                         effectiveFormat
                     );
-                    var contentType = _dataFormatService.GetContentType(effectiveFormat);
+                    var contentType = DataFormatService.GetContentType(effectiveFormat);
                     return Content(formattedData, contentType);
                 }
                 catch (ArgumentException ex)
@@ -747,19 +752,8 @@ public class EntriesController : ControllerBase
 
             _logger.LogDebug("Created {Count} entries", createdArray.Length);
 
-            try
-            {
-                var userId = GetUserId();
-                await _alertOrchestrator.EvaluateAndProcessEntriesAsync(
-                    createdArray,
-                    userId,
-                    cancellationToken
-                );
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogWarning(ex, "Failed to process alerts for created entries");
-            }
+            // Evaluate alert rules against the latest created entry
+            await EvaluateAlertsAsync(createdArray, cancellationToken);
 
             return StatusCode(201, createdArray.ToV1Responses());
         }
@@ -1321,19 +1315,6 @@ public class EntriesController : ControllerBase
                 createdEntries.Count()
             );
 
-            try
-            {
-                var userId = GetUserId();
-                await _alertOrchestrator.EvaluateAndProcessEntriesAsync(
-                    createdEntries,
-                    userId,
-                    cancellationToken
-                );
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogWarning(ex, "Failed to process alerts for async entries");
-            }
 
             return Accepted(response);
         }
@@ -1379,7 +1360,36 @@ public class EntriesController : ControllerBase
 
     private string GetUserId()
     {
-        return HttpContext.GetSubjectIdString()
+        var authContext = HttpContext.GetAuthContext();
+        return authContext?.SubjectId?.ToString()
+            ?? HttpContext.GetSubjectIdString()
             ?? "00000000-0000-0000-0000-000000000001";
+    }
+
+    private async Task EvaluateAlertsAsync(Entry[] entries, CancellationToken ct)
+    {
+        try
+        {
+            var latest = entries
+                .Where(e => e.Sgv.HasValue && e.Sgv.Value > 0)
+                .OrderByDescending(e => e.Mills)
+                .FirstOrDefault();
+
+            if (latest is null) return;
+
+            var context = new SensorContext
+            {
+                LatestValue = (decimal?)latest.Sgv,
+                LatestTimestamp = latest.Date ?? DateTimeOffset.FromUnixTimeMilliseconds(latest.Mills).UtcDateTime,
+                TrendRate = (decimal?)latest.TrendRate,
+                LastReadingAt = latest.Date ?? DateTimeOffset.FromUnixTimeMilliseconds(latest.Mills).UtcDateTime,
+            };
+
+            await _alertOrchestrator.EvaluateAsync(context, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Alert evaluation failed after V1 entry creation");
+        }
     }
 }

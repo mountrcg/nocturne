@@ -6,6 +6,7 @@
     Text,
     Group,
     ChartClipPath,
+    Highlight,
     AnnotationRange,
     AnnotationLine,
     AnnotationPoint,
@@ -52,6 +53,7 @@
       yScale: (value: number) => number;
     };
     showBasal: boolean;
+    onPointClick?: (time: Date) => void;
   }
 
   let {
@@ -66,6 +68,7 @@
     basalAxisScale,
     context,
     showBasal,
+    onPointClick,
   }: Props = $props();
 
   // Group consecutive basal points by origin for proper layered rendering
@@ -93,6 +96,22 @@
     // Don't forget the last segment
     if (currentSegment && currentSegment.points.length > 0) {
       segments.push(currentSegment);
+    }
+
+    // Add closing points so curveStepAfter renders the last step of each segment.
+    // Without this, a segment with a single point (e.g. a temp basal immediately
+    // followed by a suspended period) produces no visible area.
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      const lastPoint = seg.points[seg.points.length - 1];
+      const nextSegFirstPoint = segments[i + 1]?.points[0];
+
+      if (nextSegFirstPoint && lastPoint.timestamp !== nextSegFirstPoint.timestamp) {
+        seg.points.push({
+          ...lastPoint,
+          timestamp: nextSegFirstPoint.timestamp,
+        });
+      }
     }
 
     return segments;
@@ -255,4 +274,27 @@
       {/if}
     {/each}
   {/if}
+
+  <!-- Basal highlight for point click -->
+  <ChartClipPath>
+    <Highlight
+      x={(d) => d.time}
+      y={(d) => {
+        const timeMs = d.time.getTime();
+        let nearest: BasalDataPoint | undefined;
+        for (let i = basalData.length - 1; i >= 0; i--) {
+          if ((basalData[i].timestamp ?? 0) <= timeMs) {
+            nearest = basalData[i];
+            break;
+          }
+        }
+        if (!nearest || nearest.rate == null) return null;
+        return basalScale(nearest.rate);
+      }}
+      points={{ class: "fill-iob-basal" }}
+      onPointClick={onPointClick
+        ? (_e, { data }) => onPointClick(data.time)
+        : undefined}
+    />
+  </ChartClipPath>
 {/if}

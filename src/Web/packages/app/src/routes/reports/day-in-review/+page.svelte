@@ -1,7 +1,8 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import type { Treatment, TreatmentSummary } from "$lib/api";
+  import type { Bolus } from "$lib/api";
+  import type { EntryRecord } from "$lib/constants/entry-categories";
   import * as Card from "$lib/components/ui/card";
   import * as Table from "$lib/components/ui/table";
   import * as Select from "$lib/components/ui/select";
@@ -12,10 +13,7 @@
     ChevronRight,
     Calendar,
     ArrowLeft,
-    Pill,
     Apple,
-    Droplet,
-    Target,
     ArrowUpDown,
     ArrowUp,
     ArrowDown,
@@ -26,12 +24,20 @@
   import { getDayInReviewData } from "./data.remote";
   import { glucoseUnits } from "$lib/stores/appearance-store.svelte";
   import { formatGlucoseValue, getUnitLabel } from "$lib/utils/formatting";
-
-  import { TreatmentEditDialog } from "$lib/components/treatments";
-  import { getEventTypeStyle } from "$lib/constants/treatment-categories";
+  import {
+    getRowTypeStyle,
+    mergeTreatmentRows,
+    type TreatmentRow,
+  } from "$lib/constants/treatment-categories";
   import InsulinDonutChart from "$lib/components/reports/InsulinDonutChart.svelte";
+  import TIRStackedChart from "$lib/components/reports/TIRStackedChart.svelte";
+  import ReliabilityBadge from "$lib/components/reports/ReliabilityBadge.svelte";
+  import RetrospectiveTimeScrubber from "$lib/components/reports/RetrospectiveTimeScrubber.svelte";
+  import ApsStateCard from "$lib/components/reports/ApsStateCard.svelte";
+  import TreatmentEditDialog from "$lib/components/treatments/TreatmentEditDialog.svelte";
   import { GlucoseChartCard } from "$lib/components/dashboard/glucose-chart";
   import { contextResource } from "$lib/hooks/resource-context.svelte";
+  import { apsSnapshotToPrediction } from "$lib/utils/aps-snapshot-to-prediction";
 
   // Get date from URL search params
   const dateParam = $derived(
@@ -46,12 +52,14 @@
 
   const dayData = $derived(dayDataResource.current);
 
+  // Short aliases for deeply-nested backend data
+  const analysis = $derived(dayData?.analysis);
+  const basicStats = $derived(analysis?.basicStats);
+  const delivery = $derived(dayData?.insulinDelivery);
+  const summary = $derived(dayData?.treatmentSummary);
+
   // Parse current date from URL
   const currentDate = $derived(new Date(dateParam));
-
-  // Treatment editing state
-  let selectedTreatment = $state<Treatment | null>(null);
-  let editDialogOpen = $state(false);
 
   // Treatments timeline filter/sort state
   let filterEventType = $state<string | null>(null);
@@ -64,9 +72,7 @@
     prevDate.setDate(prevDate.getDate() - 1);
     goto(
       `/reports/day-in-review?date=${prevDate.toISOString().split("T")[0]}`,
-      {
-        invalidateAll: true,
-      }
+      { invalidateAll: true }
     );
   }
 
@@ -75,9 +81,7 @@
     nextDate.setDate(nextDate.getDate() + 1);
     goto(
       `/reports/day-in-review?date=${nextDate.toISOString().split("T")[0]}`,
-      {
-        invalidateAll: true,
-      }
+      { invalidateAll: true }
     );
   }
 
@@ -99,79 +103,53 @@
   const units = $derived(glucoseUnits.current);
   const unitLabel = $derived(getUnitLabel(units));
 
-  // Colors for glucose chart (using CSS variables for theme support)
-  const GLUCOSE_COLORS = {
-    line: "var(--insulin)",
-    low: "var(--glucose-low)",
-    inRange: "var(--glucose-in-range)",
-    high: "var(--glucose-high)",
-    severeLow: "var(--glucose-very-low)",
-    severeHigh: "var(--glucose-very-high)",
-  };
+  // Merge boluses and carb intakes into a single timeline using existing utility
+  const treatmentRows = $derived(
+    mergeTreatmentRows(dayData?.boluses ?? [], dayData?.carbIntakes ?? [])
+  );
 
-  // Treatment colors
-  const TREATMENT_COLORS = {
-    carbs: "#ff9a00", // Orange
-    insulin: "#0066cc", // Dark Blue
-    bolus: "#0099ff", // Light Blue
-    basal: "#66ccff", // Lighter Blue
-  };
-
-  // Process treatments for markers (with original treatment reference for editing)
-  const treatmentMarkers = $derived.by(() => {
-    const treatments = (dayData?.treatments ?? []) as Treatment[];
-
-    return treatments
-      .filter((t) => t.mills || t.createdAt || t.created_at)
-      .map((t) => ({
-        time: new Date(
-          t.mills ?? new Date(t.createdAt ?? t.created_at!).getTime()
-        ),
-        carbs: t.carbs ?? 0,
-        insulin: t.insulin ?? 0,
-        eventType: t.eventType ?? "",
-        notes: t.notes ?? "",
-        rate: t.rate,
-        duration: t.duration,
-        original: t, // Keep reference for editing
-      }))
-      .sort((a, b) => a.time.getTime() - b.time.getTime());
-  });
+  function getRowLabel(row: TreatmentRow): string {
+    return row.rowType === "bolus" ? (row.bolusType ?? "Bolus") : "Carb Intake";
+  }
 
   // Get unique event types for filter dropdown
   const uniqueEventTypes = $derived.by(() => {
     const types = new Set<string>();
-    for (const t of treatmentMarkers) {
-      if (t.eventType) types.add(t.eventType);
+    for (const row of treatmentRows) {
+      types.add(getRowLabel(row));
     }
     return Array.from(types).sort();
   });
 
   // Filtered and sorted treatments
   const filteredTreatments = $derived.by(() => {
-    let result = [...treatmentMarkers];
+    let result = [...treatmentRows];
 
-    // Apply filter
     if (filterEventType) {
-      result = result.filter((t) => t.eventType === filterEventType);
+      result = result.filter((row) => getRowLabel(row) === filterEventType);
     }
 
-    // Apply sort
     result.sort((a, b) => {
       let comparison = 0;
       switch (sortColumn) {
         case "time":
-          comparison = a.time.getTime() - b.time.getTime();
+          comparison = (a.mills ?? 0) - (b.mills ?? 0);
           break;
         case "type":
-          comparison = (a.eventType || "").localeCompare(b.eventType || "");
+          comparison = getRowLabel(a).localeCompare(getRowLabel(b));
           break;
-        case "carbs":
-          comparison = a.carbs - b.carbs;
+        case "carbs": {
+          const ac = a.rowType === "carbIntake" ? (a.carbs ?? 0) : 0;
+          const bc = b.rowType === "carbIntake" ? (b.carbs ?? 0) : 0;
+          comparison = ac - bc;
           break;
-        case "insulin":
-          comparison = a.insulin - b.insulin;
+        }
+        case "insulin": {
+          const ai = a.rowType === "bolus" ? (a.insulin ?? 0) : 0;
+          const bi = b.rowType === "bolus" ? (b.insulin ?? 0) : 0;
+          comparison = ai - bi;
           break;
+        }
       }
       return sortDirection === "asc" ? comparison : -comparison;
     });
@@ -179,116 +157,48 @@
     return result;
   });
 
-  // Use backend-calculated glucose statistics from analysis
-  const glucoseStats = $derived.by(() => {
-    const analysis = dayData?.analysis;
-    const basicStats = analysis?.basicStats;
-    const tir = analysis?.timeInRange?.percentages;
-
-    if (!basicStats || !tir) {
-      return {
-        totalReadings: (dayData?.entries ?? []).length,
-        mean: 0,
-        median: 0,
-        stdDev: 0,
-        min: 0,
-        max: 0,
-        inRange: 0,
-        low: 0,
-        high: 0,
-        inRangePercent: 0,
-        lowPercent: 0,
-        highPercent: 0,
-        a1cEstimate: 0,
-        gmi: 0,
-        cv: 0,
-      };
-    }
-
-    return {
-      totalReadings: basicStats.count ?? (dayData?.entries ?? []).length,
-      mean: basicStats.mean ?? 0,
-      median: basicStats.median ?? 0,
-      stdDev: basicStats.standardDeviation ?? 0,
-      min: basicStats.min ?? 0,
-      max: basicStats.max ?? 0,
-      inRange: 0, // Count not available from backend
-      low: 0,
-      high: 0,
-      inRangePercent: tir.target ?? 0,
-      lowPercent: (tir.low ?? 0) + (tir.severeLow ?? 0),
-      highPercent: (tir.high ?? 0) + (tir.severeHigh ?? 0),
-      a1cEstimate:
-        analysis?.gmi?.value ?? ((basicStats.mean ?? 0) + 46.7) / 28.7,
-      gmi: analysis?.gmi?.value ?? 0,
-      cv: analysis?.glycemicVariability?.coefficientOfVariation ?? 0,
-    };
-  });
-
-  // Treatment statistics - uses backend-calculated values only
-  // The backend TreatmentSummary is the source of truth
-  const treatmentStats = $derived.by(() => {
-    const summary = dayData?.treatmentSummary as TreatmentSummary | null;
-    const treatments = (dayData?.treatments ?? []) as Treatment[];
-    const treatmentCount = summary?.treatmentCount ?? treatments.length;
-
-    // All totals come from backend calculation
-    const totalBolus = summary?.totals?.insulin?.bolus ?? 0;
-    const totalBasal = summary?.totals?.insulin?.basal ?? 0;
-    const totalCarbs = summary?.totals?.food?.carbs ?? 0;
-    const totalInsulin = totalBolus + totalBasal;
-
-    return {
-      totalCarbs,
-      totalBolus,
-      totalBasal,
-      totalInsulin,
-      totalDailyInsulin: totalInsulin,
-      treatmentCount,
-    };
-  });
-
-  // Pie chart data for TIR distribution
-  const tirPieData = $derived(
-    [
-      {
-        name: "In Range",
-        value: glucoseStats.inRangePercent,
-        color: GLUCOSE_COLORS.inRange,
-      },
-      {
-        name: "Low",
-        value: glucoseStats.lowPercent,
-        color: GLUCOSE_COLORS.low,
-      },
-      {
-        name: "High",
-        value: glucoseStats.highPercent,
-        color: GLUCOSE_COLORS.high,
-      },
-    ].filter((d) => d.value > 0)
+  // Insulin delivery values for the donut chart (fallback chain is meaningful)
+  const scheduledBasal = $derived(
+    delivery?.scheduledBasal ?? summary?.totals?.insulin?.scheduledBasal ?? 0
+  );
+  const additionalBasal = $derived(
+    delivery?.additionalBasal ?? summary?.totals?.insulin?.additionalBasal ?? 0
   );
 
-  // Handle treatment row click
-  function handleTreatmentClick(treatment: (typeof treatmentMarkers)[0]) {
-    selectedTreatment = treatment.original;
+  // === Treatment Edit Dialog ===
+  let editDialogOpen = $state(false);
+  let editDialogRecord = $state<EntryRecord | null>(null);
+  let editCorrelatedRecords = $state<EntryRecord[]>([]);
+
+  function openBolusDialog(bolus: Bolus) {
+    const record: EntryRecord = { kind: "bolus", data: bolus };
+    const correlated: EntryRecord[] = [];
+    if (bolus.correlationId) {
+      const linkedCarb = (dayData?.carbIntakes ?? []).find(
+        (c) => c.correlationId === bolus.correlationId
+      );
+      if (linkedCarb) correlated.push({ kind: "carbs", data: linkedCarb });
+    }
+    editDialogRecord = record;
+    editCorrelatedRecords = correlated;
     editDialogOpen = true;
   }
 
-  // Handle treatment save
-  function handleTreatmentSave(updatedTreatment: Treatment) {
-    // TODO: Call API to update treatment
-    console.log("Saving treatment:", updatedTreatment);
-    editDialogOpen = false;
-    selectedTreatment = null;
-    // Refresh data after save
-    // getDayInReviewData.invalidate();
-  }
-
-  // Handle treatment dialog close
-  function handleDialogClose() {
-    editDialogOpen = false;
-    selectedTreatment = null;
+  function handleTreatmentClick(row: TreatmentRow) {
+    if (row.rowType === "bolus") {
+      openBolusDialog(row);
+    } else {
+      editDialogRecord = { kind: "carbs", data: row };
+      const correlated: EntryRecord[] = [];
+      if (row.correlationId) {
+        const linkedBolus = (dayData?.boluses ?? []).find(
+          (b) => b.correlationId === row.correlationId
+        );
+        if (linkedBolus) correlated.push({ kind: "bolus", data: linkedBolus });
+      }
+      editCorrelatedRecords = correlated;
+      editDialogOpen = true;
+    }
   }
 
   // Toggle sort
@@ -305,7 +215,61 @@
   function clearFilter() {
     filterEventType = null;
   }
+
+  // === Historical Predictions ===
+  const apsSnapshots = $derived(dayData?.apsSnapshots ?? []);
+  const hasApsSnapshots = $derived(apsSnapshots.length > 0);
+
+  // Scrubber time state
+  let scrubberTime = $state(new Date());
+
+  // Find the nearest APS snapshot to the scrubber time
+  const selectedSnapshot = $derived.by(() => {
+    if (apsSnapshots.length === 0) return null;
+    const targetMs = scrubberTime.getTime();
+    let closest = apsSnapshots[0];
+    let closestDist = Math.abs((closest.mills ?? 0) - targetMs);
+    for (let i = 1; i < apsSnapshots.length; i++) {
+      const dist = Math.abs((apsSnapshots[i].mills ?? 0) - targetMs);
+      if (dist < closestDist) {
+        closest = apsSnapshots[i];
+        closestDist = dist;
+      }
+    }
+    return closest;
+  });
+
+  const selectedPredictionData = $derived.by(() => {
+    if (!selectedSnapshot) return null;
+    return apsSnapshotToPrediction(selectedSnapshot);
+  });
+
+  function handleScrubberTimeChange(time: Date) {
+    scrubberTime = time;
+  }
 </script>
+
+{#snippet sortableHeader(column: "time" | "type" | "carbs" | "insulin", label: string, alignRight = false)}
+  <Table.Head class={alignRight ? "text-right" : ""}>
+    <Button
+      variant="ghost"
+      size="sm"
+      class={alignRight ? "-mr-3" : "-ml-3"}
+      onclick={() => toggleSort(column)}
+    >
+      {label}
+      {#if sortColumn === column}
+        {#if sortDirection === "asc"}
+          <ArrowUp class="ml-1 h-4 w-4" />
+        {:else}
+          <ArrowDown class="ml-1 h-4 w-4" />
+        {/if}
+      {:else}
+        <ArrowUpDown class="ml-1 h-4 w-4 opacity-50" />
+      {/if}
+    </Button>
+  </Table.Head>
+{/snippet}
 
 {#if dayDataResource.current}
 <div class="space-y-6 p-4">
@@ -313,13 +277,11 @@
   <Card.Root>
     <Card.Content class="p-4">
       <div class="flex flex-wrap items-center justify-between gap-4">
-        <!-- Back button -->
         <Button variant="ghost" size="sm" onclick={goBackToMonthView}>
           <ArrowLeft class="h-4 w-4 mr-2" />
           Back to Month View
         </Button>
 
-        <!-- Date Navigation -->
         <div class="flex items-center gap-2">
           <Button variant="outline" size="icon" onclick={goToPreviousDay}>
             <ChevronLeft class="h-4 w-4" />
@@ -338,66 +300,88 @@
     </Card.Content>
   </Card.Root>
 
-  <!-- Summary Stats Row -->
-  <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-    <!-- Time in Range -->
-    <Card.Root>
-      <Card.Content class="p-4 text-center">
-        <div class="text-3xl font-bold" style="color: {GLUCOSE_COLORS.inRange}">
-          {glucoseStats.inRangePercent.toFixed(0)}%
-        </div>
-        <div class="text-sm text-muted-foreground">Time in Range</div>
-      </Card.Content>
-    </Card.Root>
-
-    <!-- Low -->
-    <Card.Root>
-      <Card.Content class="p-4 text-center">
-        <div class="text-3xl font-bold" style="color: {GLUCOSE_COLORS.low}">
-          {glucoseStats.lowPercent.toFixed(0)}%
-        </div>
-        <div class="text-sm text-muted-foreground">Time Low</div>
-      </Card.Content>
-    </Card.Root>
-
-    <!-- High -->
-    <Card.Root>
-      <Card.Content class="p-4 text-center">
-        <div class="text-3xl font-bold" style="color: {GLUCOSE_COLORS.high}">
-          {glucoseStats.highPercent.toFixed(0)}%
-        </div>
-        <div class="text-sm text-muted-foreground">Time High</div>
-      </Card.Content>
-    </Card.Root>
-
-    <!-- Total Carbs -->
-    <Card.Root>
-      <Card.Content class="p-4 text-center">
-        <div class="text-3xl font-bold" style="color: {TREATMENT_COLORS.carbs}">
-          {treatmentStats.totalCarbs.toFixed(0)}g
-        </div>
-        <div class="text-sm text-muted-foreground">Total Carbs</div>
-      </Card.Content>
-    </Card.Root>
-
-    <!-- Total Bolus -->
-    <Card.Root>
-      <Card.Content class="p-4 text-center">
-        <div class="text-3xl font-bold" style="color: {TREATMENT_COLORS.bolus}">
-          {treatmentStats.totalBolus.toFixed(1)}U
-        </div>
-        <div class="text-sm text-muted-foreground">Bolus Insulin</div>
-      </Card.Content>
-    </Card.Root>
-
-    <!-- Total Daily Insulin Donut Chart -->
-    <Card.Root>
-      <Card.Content class="p-4 flex justify-center">
-        <InsulinDonutChart
-          treatments={dayData?.treatments ?? []}
-          basal={treatmentStats.totalBasal}
-          href="/reports/insulin-delivery"
+  <!-- Summary Stats -->
+  <div class="grid md:grid-cols-3 gap-6">
+    <!-- Glucose Overview -->
+    <Card.Root class="md:col-span-2">
+      <Card.Content class="p-4 space-y-4">
+        <TIRStackedChart
+          percentages={analysis?.timeInRange?.percentages}
+          orientation="horizontal"
+          compact
         />
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 text-sm">
+          <div>
+            <div class="text-muted-foreground">Mean</div>
+            <div class="font-medium tabular-nums">
+              {formatGlucoseValue(basicStats?.mean ?? 0, units)} {unitLabel}
+            </div>
+          </div>
+          <div>
+            <div class="text-muted-foreground">Median</div>
+            <div class="font-medium tabular-nums">
+              {formatGlucoseValue(basicStats?.median ?? 0, units)} {unitLabel}
+            </div>
+          </div>
+          <div>
+            <div class="text-muted-foreground">Std Dev</div>
+            <div class="font-medium tabular-nums">
+              {formatGlucoseValue(basicStats?.standardDeviation ?? 0, units)} {unitLabel}
+            </div>
+          </div>
+          <div>
+            <div class="text-muted-foreground">CV</div>
+            <div class="font-medium tabular-nums">
+              {(analysis?.glycemicVariability?.coefficientOfVariation ?? 0).toFixed(1)}%
+            </div>
+          </div>
+          <div>
+            <div class="text-muted-foreground">Range</div>
+            <div class="font-medium tabular-nums">
+              {formatGlucoseValue(basicStats?.min ?? 0, units)} – {formatGlucoseValue(basicStats?.max ?? 0, units)} {unitLabel}
+            </div>
+          </div>
+          <div>
+            <div class="text-muted-foreground">GMI</div>
+            <div class="font-medium tabular-nums">
+              {analysis?.gmi?.value ? `${analysis.gmi.value.toFixed(1)}%` : '–'}
+            </div>
+          </div>
+          <div>
+            <div class="text-muted-foreground">Readings</div>
+            <div class="font-medium tabular-nums">
+              {basicStats?.count ?? dayData?.entries?.length ?? 0}
+            </div>
+          </div>
+        </div>
+        <ReliabilityBadge reliability={analysis?.reliability} />
+      </Card.Content>
+    </Card.Root>
+
+    <!-- Treatment Summary -->
+    <Card.Root>
+      <Card.Content class="p-4 flex flex-col items-center gap-4">
+        <InsulinDonutChart
+          boluses={dayData?.boluses ?? []}
+          {scheduledBasal}
+          {additionalBasal}
+          carbIntakes={dayData?.carbIntakes ?? []}
+          onBolusClick={openBolusDialog}
+        />
+        <div class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm w-full">
+          <div>
+            <div class="text-muted-foreground">Total Carbs</div>
+            <div class="font-bold tabular-nums">
+              {(summary?.totals?.food?.carbs ?? 0).toFixed(0)}g
+            </div>
+          </div>
+          <div>
+            <div class="text-muted-foreground">Boluses</div>
+            <div class="font-medium tabular-nums">
+              {delivery?.bolusCount ?? dayData?.boluses?.filter(b => (b.insulin ?? 0) > 0).length ?? 0}
+            </div>
+          </div>
+        </div>
       </Card.Content>
     </Card.Root>
   </div>
@@ -411,9 +395,7 @@
           currentDate.getFullYear(),
           currentDate.getMonth(),
           currentDate.getDate(),
-          0,
-          0,
-          0
+          0, 0, 0
         ),
       to:
         dayData?.dateRange?.to ??
@@ -421,189 +403,23 @@
           currentDate.getFullYear(),
           currentDate.getMonth(),
           currentDate.getDate(),
-          23,
-          59,
-          59
+          23, 59, 59
         ),
     }}
-    showPredictions={false}
+    showPredictions={hasApsSnapshots && selectedPredictionData != null}
+    externalPredictionData={selectedPredictionData}
   />
 
-  <!-- Detailed Stats Row -->
-  <div class="grid md:grid-cols-3 gap-6">
-    <!-- TIR Distribution Pie -->
-    <Card.Root>
-      <Card.Header class="pb-2">
-        <Card.Title class="flex items-center gap-2">
-          <Target class="h-5 w-5" />
-          Glucose Distribution
-        </Card.Title>
-      </Card.Header>
-      <Card.Content>
-        <div class="h-[200px] flex items-center justify-center">
-          {#if tirPieData.length > 0}
-            {@const radius = 80}
-            {@const innerRadius = 50}
-            <svg
-              width={radius * 2 + 20}
-              height={radius * 2 + 20}
-              viewBox="-{radius + 10} -{radius + 10} {radius * 2 + 20} {radius *
-                2 +
-                20}"
-            >
-              {#each tirPieData as slice, i}
-                {@const total = tirPieData.reduce((sum, d) => sum + d.value, 0)}
-                {@const startAngle =
-                  tirPieData
-                    .slice(0, i)
-                    .reduce((sum, d) => sum + (d.value / total) * 360, 0) - 90}
-                {@const endAngle = startAngle + (slice.value / total) * 360}
-                {@const startRad = (startAngle * Math.PI) / 180}
-                {@const endRad = (endAngle * Math.PI) / 180}
-                {@const largeArc = endAngle - startAngle > 180 ? 1 : 0}
-                {@const x1Outer = radius * Math.cos(startRad)}
-                {@const y1Outer = radius * Math.sin(startRad)}
-                {@const x2Outer = radius * Math.cos(endRad)}
-                {@const y2Outer = radius * Math.sin(endRad)}
-                {@const x1Inner = innerRadius * Math.cos(endRad)}
-                {@const y1Inner = innerRadius * Math.sin(endRad)}
-                {@const x2Inner = innerRadius * Math.cos(startRad)}
-                {@const y2Inner = innerRadius * Math.sin(startRad)}
-                <path
-                  d="M {x1Outer} {y1Outer} A {radius} {radius} 0 {largeArc} 1 {x2Outer} {y2Outer} L {x1Inner} {y1Inner} A {innerRadius} {innerRadius} 0 {largeArc} 0 {x2Inner} {y2Inner} Z"
-                  fill={slice.color}
-                  stroke="white"
-                  stroke-width="2"
-                />
-              {/each}
-            </svg>
-          {:else}
-            <span class="text-muted-foreground">No data</span>
-          {/if}
-        </div>
-
-        <!-- Legend -->
-        <div class="flex justify-center gap-4 mt-4">
-          {#each tirPieData as slice}
-            <div class="flex items-center gap-2">
-              <div
-                class="h-3 w-3 rounded-full"
-                style="background-color: {slice.color}"
-              ></div>
-              <span class="text-sm">
-                {slice.name}: {slice.value.toFixed(1)}%
-              </span>
-            </div>
-          {/each}
-        </div>
-      </Card.Content>
-    </Card.Root>
-
-    <!-- Glucose Statistics -->
-    <Card.Root>
-      <Card.Header class="pb-2">
-        <Card.Title class="flex items-center gap-2">
-          <Droplet class="h-5 w-5" />
-          Glucose Statistics
-        </Card.Title>
-      </Card.Header>
-      <Card.Content>
-        <Table.Root>
-          <Table.Body>
-            <Table.Row>
-              <Table.Cell class="font-medium">Mean</Table.Cell>
-              <Table.Cell class="text-right">
-                {formatGlucoseValue(glucoseStats.mean, units)}
-                {unitLabel}
-              </Table.Cell>
-            </Table.Row>
-            <Table.Row>
-              <Table.Cell class="font-medium">Median</Table.Cell>
-              <Table.Cell class="text-right">
-                {formatGlucoseValue(glucoseStats.median, units)}
-                {unitLabel}
-              </Table.Cell>
-            </Table.Row>
-            <Table.Row>
-              <Table.Cell class="font-medium">Std Dev</Table.Cell>
-              <Table.Cell class="text-right">
-                {formatGlucoseValue(glucoseStats.stdDev, units)}
-                {unitLabel}
-              </Table.Cell>
-            </Table.Row>
-            <Table.Row>
-              <Table.Cell class="font-medium">Min / Max</Table.Cell>
-              <Table.Cell class="text-right">
-                {formatGlucoseValue(glucoseStats.min, units)} / {formatGlucoseValue(
-                  glucoseStats.max,
-                  units
-                )}
-                {unitLabel}
-              </Table.Cell>
-            </Table.Row>
-            <Table.Row>
-              <Table.Cell class="font-medium">Readings</Table.Cell>
-              <Table.Cell class="text-right">
-                {glucoseStats.totalReadings}
-              </Table.Cell>
-            </Table.Row>
-            <Table.Row>
-              <Table.Cell class="font-medium">Est. A1c</Table.Cell>
-              <Table.Cell class="text-right">
-                {glucoseStats.a1cEstimate.toFixed(1)}%
-              </Table.Cell>
-            </Table.Row>
-          </Table.Body>
-        </Table.Root>
-      </Card.Content>
-    </Card.Root>
-
-    <!-- Insulin Statistics -->
-    <Card.Root>
-      <Card.Header class="pb-2">
-        <Card.Title class="flex items-center gap-2">
-          <Pill class="h-5 w-5" />
-          Insulin & Carbs
-        </Card.Title>
-      </Card.Header>
-      <Card.Content>
-        <Table.Root>
-          <Table.Body>
-            <Table.Row>
-              <Table.Cell class="font-medium">Bolus Insulin</Table.Cell>
-              <Table.Cell class="text-right">
-                {treatmentStats.totalBolus.toFixed(1)}U
-              </Table.Cell>
-            </Table.Row>
-            <Table.Row>
-              <Table.Cell class="font-medium">Basal Insulin</Table.Cell>
-              <Table.Cell class="text-right">
-                {treatmentStats.totalBasal.toFixed(1)}U
-              </Table.Cell>
-            </Table.Row>
-            <Table.Row>
-              <Table.Cell class="font-medium">Total Daily Insulin</Table.Cell>
-              <Table.Cell class="text-right font-bold">
-                {treatmentStats.totalDailyInsulin.toFixed(1)}U
-              </Table.Cell>
-            </Table.Row>
-            <Table.Row>
-              <Table.Cell class="font-medium">Total Carbs</Table.Cell>
-              <Table.Cell class="text-right font-bold">
-                {treatmentStats.totalCarbs.toFixed(0)}g
-              </Table.Cell>
-            </Table.Row>
-            <Table.Row>
-              <Table.Cell class="font-medium">Treatment Count</Table.Cell>
-              <Table.Cell class="text-right">
-                {treatmentStats.treatmentCount}
-              </Table.Cell>
-            </Table.Row>
-          </Table.Body>
-        </Table.Root>
-      </Card.Content>
-    </Card.Root>
-  </div>
+  <!-- Historical Prediction Scrubber + APS State -->
+  {#if hasApsSnapshots}
+    <RetrospectiveTimeScrubber
+      date={currentDate}
+      bind:currentTime={scrubberTime}
+      onTimeChange={handleScrubberTimeChange}
+      stepMinutes={5}
+    />
+    <ApsStateCard snapshot={selectedSnapshot} />
+  {/if}
 
   <!-- Treatments Timeline with Filter/Sort -->
   <Card.Root>
@@ -614,9 +430,7 @@
           Treatments Timeline
         </Card.Title>
 
-        <!-- Filter/Sort Controls -->
         <div class="flex items-center gap-2">
-          <!-- Event Type Filter -->
           <Select.Root
             type="single"
             value={filterEventType ?? ""}
@@ -652,124 +466,50 @@
         <Table.Root>
           <Table.Header>
             <Table.Row>
-              <Table.Head>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="-ml-3"
-                  onclick={() => toggleSort("time")}
-                >
-                  Time
-                  {#if sortColumn === "time"}
-                    {#if sortDirection === "asc"}
-                      <ArrowUp class="ml-1 h-4 w-4" />
-                    {:else}
-                      <ArrowDown class="ml-1 h-4 w-4" />
-                    {/if}
-                  {:else}
-                    <ArrowUpDown class="ml-1 h-4 w-4 opacity-50" />
-                  {/if}
-                </Button>
-              </Table.Head>
-              <Table.Head>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="-ml-3"
-                  onclick={() => toggleSort("type")}
-                >
-                  Type
-                  {#if sortColumn === "type"}
-                    {#if sortDirection === "asc"}
-                      <ArrowUp class="ml-1 h-4 w-4" />
-                    {:else}
-                      <ArrowDown class="ml-1 h-4 w-4" />
-                    {/if}
-                  {:else}
-                    <ArrowUpDown class="ml-1 h-4 w-4 opacity-50" />
-                  {/if}
-                </Button>
-              </Table.Head>
-              <Table.Head class="text-right">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="-mr-3"
-                  onclick={() => toggleSort("carbs")}
-                >
-                  Carbs
-                  {#if sortColumn === "carbs"}
-                    {#if sortDirection === "asc"}
-                      <ArrowUp class="ml-1 h-4 w-4" />
-                    {:else}
-                      <ArrowDown class="ml-1 h-4 w-4" />
-                    {/if}
-                  {:else}
-                    <ArrowUpDown class="ml-1 h-4 w-4 opacity-50" />
-                  {/if}
-                </Button>
-              </Table.Head>
-              <Table.Head class="text-right">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="-mr-3"
-                  onclick={() => toggleSort("insulin")}
-                >
-                  Insulin
-                  {#if sortColumn === "insulin"}
-                    {#if sortDirection === "asc"}
-                      <ArrowUp class="ml-1 h-4 w-4" />
-                    {:else}
-                      <ArrowDown class="ml-1 h-4 w-4" />
-                    {/if}
-                  {:else}
-                    <ArrowUpDown class="ml-1 h-4 w-4 opacity-50" />
-                  {/if}
-                </Button>
-              </Table.Head>
+              {@render sortableHeader("time", "Time")}
+              {@render sortableHeader("type", "Type")}
+              {@render sortableHeader("carbs", "Carbs", true)}
+              {@render sortableHeader("insulin", "Insulin", true)}
               <Table.Head>Notes</Table.Head>
               <Table.Head class="w-[50px]"></Table.Head>
             </Table.Row>
           </Table.Header>
           <Table.Body>
-            {#each filteredTreatments as treatment}
-              {@const style = getEventTypeStyle(treatment.eventType)}
+            {#each filteredTreatments as row}
+              {@const style = getRowTypeStyle(row.rowType)}
               <Table.Row
                 class="cursor-pointer hover:bg-muted/50 transition-colors"
-                onclick={() => handleTreatmentClick(treatment)}
+                onclick={() => handleTreatmentClick(row)}
               >
                 <Table.Cell class="font-medium">
-                  {treatment.time.toLocaleTimeString(undefined, {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
+                  {row.mills
+                    ? new Date(row.mills).toLocaleTimeString(undefined, {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "—"}
                 </Table.Cell>
                 <Table.Cell>
                   <Badge
                     variant="outline"
                     class="{style.colorClass} {style.bgClass} {style.borderClass}"
                   >
-                    {treatment.eventType || "—"}
+                    {getRowLabel(row)}
                   </Badge>
                 </Table.Cell>
                 <Table.Cell class="text-right">
-                  {#if treatment.carbs > 0}
-                    <span style="color: {TREATMENT_COLORS.carbs}">
-                      {treatment.carbs}g
+                  {#if row.rowType === "carbIntake" && (row.carbs ?? 0) > 0}
+                    <span class={getRowTypeStyle("carbIntake").colorClass}>
+                      {row.carbs}g
                     </span>
                   {:else}
                     —
                   {/if}
                 </Table.Cell>
                 <Table.Cell class="text-right">
-                  {#if treatment.insulin > 0}
-                    <span style="color: {TREATMENT_COLORS.bolus}">
-                      {treatment.insulin.toFixed(2)}U
-                    </span>
-                  {:else if treatment.rate !== undefined}
-                    <span style="color: {TREATMENT_COLORS.basal}">
-                      {treatment.rate.toFixed(2)}U/hr
+                  {#if row.rowType === "bolus" && (row.insulin ?? 0) > 0}
+                    <span class={getRowTypeStyle("bolus").colorClass}>
+                      {(row.insulin ?? 0).toFixed(2)}U
                     </span>
                   {:else}
                     —
@@ -778,7 +518,7 @@
                 <Table.Cell
                   class="text-muted-foreground truncate max-w-[200px]"
                 >
-                  {treatment.notes || "—"}
+                  —
                 </Table.Cell>
                 <Table.Cell>
                   <Button variant="ghost" size="icon" class="h-8 w-8">
@@ -799,13 +539,12 @@
     </Card.Content>
   </Card.Root>
 </div>
-{/if}
 
-<!-- Treatment Edit Dialog -->
 <TreatmentEditDialog
   bind:open={editDialogOpen}
-  treatment={selectedTreatment}
-  availableEventTypes={uniqueEventTypes}
-  onClose={handleDialogClose}
-  onSave={handleTreatmentSave}
+  record={editDialogRecord}
+  correlatedRecords={editCorrelatedRecords}
+  onClose={() => { editDialogOpen = false; }}
+  onSave={() => { editDialogOpen = false; }}
 />
+{/if}

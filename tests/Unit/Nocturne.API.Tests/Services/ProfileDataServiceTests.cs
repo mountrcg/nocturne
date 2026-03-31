@@ -3,10 +3,12 @@ using Microsoft.Extensions.Options;
 using Moq;
 using Nocturne.API.Services;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Events;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Cache.Abstractions;
 using Nocturne.Infrastructure.Cache.Configuration;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
+using Nocturne.Tests.Shared.Mocks;
 using Xunit;
 
 namespace Nocturne.API.Tests.Services;
@@ -16,8 +18,8 @@ namespace Nocturne.API.Tests.Services;
 /// </summary>
 public class ProfileDataServiceTests
 {
-    private readonly Mock<IPostgreSqlService> _mockPostgreSqlService;
-    private readonly Mock<ISignalRBroadcastService> _mockSignalRBroadcastService;
+    private readonly Mock<IProfileRepository> _mockProfileRepository;
+    private readonly Mock<IWriteSideEffects> _mockSideEffects;
     private readonly Mock<ICacheService> _mockCacheService;
     private readonly Mock<IOptions<CacheConfiguration>> _mockCacheConfig;
     private readonly Mock<ILogger<ProfileDataService>> _mockLogger;
@@ -25,8 +27,8 @@ public class ProfileDataServiceTests
 
     public ProfileDataServiceTests()
     {
-        _mockPostgreSqlService = new Mock<IPostgreSqlService>();
-        _mockSignalRBroadcastService = new Mock<ISignalRBroadcastService>();
+        _mockProfileRepository = new Mock<IProfileRepository>();
+        _mockSideEffects = new Mock<IWriteSideEffects>();
         _mockCacheService = new Mock<ICacheService>();
         _mockCacheConfig = new Mock<IOptions<CacheConfiguration>>();
         _mockLogger = new Mock<ILogger<ProfileDataService>>();
@@ -34,10 +36,12 @@ public class ProfileDataServiceTests
         _mockCacheConfig.Setup(x => x.Value).Returns(new CacheConfiguration());
 
         _profileDataService = new ProfileDataService(
-            _mockPostgreSqlService.Object,
-            _mockSignalRBroadcastService.Object,
+            _mockProfileRepository.Object,
+            _mockSideEffects.Object,
+            Mock.Of<IDataEventSink<Profile>>(),
             _mockCacheService.Object,
             _mockCacheConfig.Object,
+            MockTenantAccessor.Create().Object,
             _mockLogger.Object
         );
     }
@@ -63,7 +67,7 @@ public class ProfileDataServiceTests
                 Mills = 1234567880,
             },
         };
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.GetProfilesAsync(10, 0, It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedProfiles);
 
@@ -96,7 +100,7 @@ public class ProfileDataServiceTests
                 Mills = 1234567890,
             },
         };
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.GetProfilesAsync(count, skip, It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedProfiles);
 
@@ -128,7 +132,7 @@ public class ProfileDataServiceTests
             Mills = 1234567890,
         };
 
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.GetProfileByIdAsync(profileId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedProfile);
 
@@ -151,7 +155,7 @@ public class ProfileDataServiceTests
         // Arrange
         var profileId = "invalidid";
 
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.GetProfileByIdAsync(profileId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((Profile?)null);
 
@@ -186,7 +190,7 @@ public class ProfileDataServiceTests
             })
             .ToList();
 
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.CreateProfilesAsync(profiles, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdProfiles);
 
@@ -199,12 +203,17 @@ public class ProfileDataServiceTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal(2, result.Count());
-        _mockPostgreSqlService.Verify(
+        _mockProfileRepository.Verify(
             x => x.CreateProfilesAsync(profiles, It.IsAny<CancellationToken>()),
             Times.Once
         );
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageCreateAsync("profiles", It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnCreatedAsync(
+                "profiles",
+                It.IsAny<IReadOnlyList<Profile>>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Once
         );
     }
@@ -229,7 +238,7 @@ public class ProfileDataServiceTests
             Mills = 1234567890,
         };
 
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.UpdateProfileAsync(profileId, profile, It.IsAny<CancellationToken>()))
             .ReturnsAsync(updatedProfile);
 
@@ -244,12 +253,17 @@ public class ProfileDataServiceTests
         Assert.NotNull(result);
         Assert.Equal(profileId, result.Id);
         Assert.Equal("updated", result.DefaultProfile);
-        _mockPostgreSqlService.Verify(
+        _mockProfileRepository.Verify(
             x => x.UpdateProfileAsync(profileId, profile, It.IsAny<CancellationToken>()),
             Times.Once
         );
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageUpdateAsync("profiles", It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnUpdatedAsync(
+                "profiles",
+                It.IsAny<Profile>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Once
         );
     }
@@ -263,7 +277,7 @@ public class ProfileDataServiceTests
         var profileId = "invalidid";
         var profile = new Profile { DefaultProfile = "default", Mills = 1234567890 };
 
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.UpdateProfileAsync(profileId, profile, It.IsAny<CancellationToken>()))
             .ReturnsAsync((Profile?)null);
 
@@ -276,8 +290,13 @@ public class ProfileDataServiceTests
 
         // Assert
         Assert.Null(result);
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageUpdateAsync(It.IsAny<string>(), It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnUpdatedAsync(
+                It.IsAny<string>(),
+                It.IsAny<Profile>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Never
         );
     }
@@ -296,11 +315,11 @@ public class ProfileDataServiceTests
             Mills = 1234567890,
         };
 
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.GetProfileByIdAsync(profileId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(profileToDelete);
 
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.DeleteProfileAsync(profileId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
@@ -312,12 +331,17 @@ public class ProfileDataServiceTests
 
         // Assert
         Assert.True(result);
-        _mockPostgreSqlService.Verify(
+        _mockProfileRepository.Verify(
             x => x.DeleteProfileAsync(profileId, It.IsAny<CancellationToken>()),
             Times.Once
         );
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageDeleteAsync("profiles", It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnDeletedAsync(
+                "profiles",
+                It.IsAny<Profile>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Once
         );
     }
@@ -330,7 +354,7 @@ public class ProfileDataServiceTests
         // Arrange
         var profileId = "invalidid";
 
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.DeleteProfileAsync(profileId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
@@ -342,8 +366,13 @@ public class ProfileDataServiceTests
 
         // Assert
         Assert.False(result);
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageDeleteAsync(It.IsAny<string>(), It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnDeletedAsync(
+                It.IsAny<string>(),
+                It.IsAny<Profile>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Never
         );
     }
@@ -395,7 +424,7 @@ public class ProfileDataServiceTests
             .Setup(x => x.GetAsync<Profile>("profiles:current", It.IsAny<CancellationToken>()))
             .ReturnsAsync((Profile?)null); // Cache miss
 
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.GetCurrentProfileAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedProfile);
 
@@ -417,7 +446,7 @@ public class ProfileDataServiceTests
             .Setup(x => x.GetAsync<Profile>("profiles:current", It.IsAny<CancellationToken>()))
             .ReturnsAsync((Profile?)null); // Cache miss
 
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.GetCurrentProfileAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((Profile?)null);
 
@@ -439,7 +468,7 @@ public class ProfileDataServiceTests
             new Profile { DefaultProfile = "default", Mills = 1234567890 },
         };
 
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x => x.CreateProfilesAsync(profiles, It.IsAny<CancellationToken>()))
             .Throws(new InvalidOperationException("Processing failed"));
 
@@ -447,8 +476,13 @@ public class ProfileDataServiceTests
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _profileDataService.CreateProfilesAsync(profiles, CancellationToken.None)
         );
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageCreateAsync(It.IsAny<string>(), It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnCreatedAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<Profile>>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Never
         );
     }

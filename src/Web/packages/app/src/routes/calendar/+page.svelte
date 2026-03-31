@@ -14,12 +14,13 @@
     Check,
   } from "lucide-svelte";
   import { Button } from "$lib/components/ui/button";
-  import { getPunchCardData } from "$lib/data/month-to-month.remote";
+  import { getPunchCardData } from "$api/month-to-month.remote";
   import {
     getActiveInstances,
     getDefinitions,
     getInstanceHistory,
-  } from "$lib/data/generated";
+    getInsulinDeliveryStatistics,
+  } from "$api";
   import type { TrackerInstanceDto, TrackerDefinitionDto } from "$api";
   import {
     NotificationUrgency as NotificationUrgencyEnum,
@@ -77,16 +78,25 @@
   // Calculate date range for current view (full month)
   // Use full ISO timestamps to ensure the entire day is included
   const dateRangeInput = $derived.by(() => {
-    const firstDay = new Date(currentYear, currentMonth, 1, 0, 0, 0, 0);
-    const lastDay = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59, 999);
+    const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     return {
-      fromDate: firstDay.toISOString().split("T")[0],
-      toDate: lastDay.toISOString().split("T")[0],
+      fromDate: `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-01`,
+      toDate: `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(lastDayOfMonth).padStart(2, "0")}`,
     };
   });
 
   // Query for punch card data (calculations done on backend)
   const punchCardQuery = $derived(getPunchCardData(dateRangeInput));
+
+  // Query for insulin delivery statistics (TDD, carbs) from the statistics endpoint
+  const insulinStatsInput = $derived.by(() => {
+    const firstDay = new Date(currentYear, currentMonth, 1, 0, 0, 0, 0);
+    const lastDay = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59, 999);
+    return { startDate: firstDay, endDate: lastDay };
+  });
+  const insulinStatsQuery = $derived(
+    getInsulinDeliveryStatistics(insulinStatsInput)
+  );
 
   // Queries for trackers
   const trackersQuery = $derived(getActiveInstances());
@@ -239,7 +249,9 @@
 
   // Check if a day is today
   function isToday(date: string): boolean {
-    return date === new Date().toISOString().split("T")[0];
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    return date === todayStr;
   }
 
   // Get cell classes based on day state
@@ -263,48 +275,24 @@
     goto(`/reports/day-in-review?date=${day.date}`);
   }
 
-  // Calculate month summary from backend data
+  // Month summary from backend-computed data
   const monthSummary = $derived.by(() => {
-    const days = Array.from(daysData.days.values());
-    const daysWithData = days.filter((d) => d.totalReadings > 0);
-    const dayCount = daysWithData.length;
-
-    const totals = days.reduce(
-      (acc, d) => ({
-        readings: acc.readings + d.totalReadings,
-        inRange: acc.inRange + d.inRangeCount,
-        low: acc.low + d.lowCount,
-        high: acc.high + d.highCount,
-        carbs: acc.carbs + d.totalCarbs,
-        insulin: acc.insulin + d.totalInsulin,
-        glucose: acc.glucose + (d.averageGlucose > 0 ? d.averageGlucose : 0),
-        glucoseDays: acc.glucoseDays + (d.averageGlucose > 0 ? 1 : 0),
-      }),
-      {
-        readings: 0,
-        inRange: 0,
-        low: 0,
-        high: 0,
-        carbs: 0,
-        insulin: 0,
-        glucose: 0,
-        glucoseDays: 0,
-      }
+    const currentData = punchCardQuery.current;
+    const monthData = currentData?.months?.find(
+      (m) => m.year === currentYear && m.month === currentMonth
     );
+    const summary = monthData?.summary;
+    const insulinStats = insulinStatsQuery.current;
 
     return {
-      ...totals,
-      dayCount,
-      avgCarbs: dayCount > 0 ? totals.carbs / dayCount : 0,
-      avgInsulin: dayCount > 0 ? totals.insulin / dayCount : 0,
-      avgGlucose:
-        totals.glucoseDays > 0 ? totals.glucose / totals.glucoseDays : 0,
-      inRangePercent:
-        totals.readings > 0 ? (totals.inRange / totals.readings) * 100 : 0,
-      lowPercent:
-        totals.readings > 0 ? (totals.low / totals.readings) * 100 : 0,
-      highPercent:
-        totals.readings > 0 ? (totals.high / totals.readings) * 100 : 0,
+      totalReadings: summary?.totalReadings ?? 0,
+      inRangePercent: summary?.inRangePercent ?? 0,
+      avgGlucose: summary?.avgGlucose ?? 0,
+      avgDailyCarbs:
+        insulinStats?.dayCount && insulinStats.dayCount > 0
+          ? (insulinStats.totalCarbs ?? 0) / insulinStats.dayCount
+          : 0,
+      tdd: insulinStats?.tdd ?? 0,
     };
   });
 
@@ -824,10 +812,16 @@
                                   {day.totalCarbs.toFixed(0)}g
                                 </span>
                                 <span class="text-muted-foreground">
-                                  Insulin:
+                                  Bolus:
                                 </span>
                                 <span class="font-medium">
-                                  {day.totalInsulin.toFixed(1)}U
+                                  {day.totalBolus.toFixed(1)}U
+                                </span>
+                                <span class="text-muted-foreground">
+                                  Basal:
+                                </span>
+                                <span class="font-medium">
+                                  {day.totalBasal.toFixed(1)}U
                                 </span>
                                 <span class="text-muted-foreground">
                                   Avg Glucose:
@@ -1076,7 +1070,7 @@
             </div>
 
             <!-- Month Summary -->
-            {#if monthSummary.readings > 0}
+            {#if monthSummary.totalReadings > 0}
               <div
                 class="mt-4 pt-4 border-t grid grid-cols-2 md:grid-cols-4 gap-4"
               >
@@ -1097,7 +1091,7 @@
                 </div>
                 <div class="text-center">
                   <div class="text-2xl font-bold">
-                    {monthSummary.avgCarbs.toFixed(0)}g
+                    {monthSummary.avgDailyCarbs.toFixed(0)}g
                   </div>
                   <div class="text-sm text-muted-foreground">
                     Avg Daily Carbs
@@ -1105,10 +1099,10 @@
                 </div>
                 <div class="text-center">
                   <div class="text-2xl font-bold">
-                    {monthSummary.avgInsulin.toFixed(1)}U
+                    {monthSummary.tdd.toFixed(1)}U
                   </div>
                   <div class="text-sm text-muted-foreground">
-                    Avg Daily Insulin
+                    Avg TDD
                   </div>
                 </div>
               </div>

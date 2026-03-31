@@ -1,6 +1,8 @@
+using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Nocturne.Connectors.Core.Interfaces;
 using Nocturne.Connectors.Core.Models;
@@ -51,6 +53,11 @@ public abstract class ConnectorOptions
     public TimeSpan? Timeout { get; init; }
 
     /// <summary>
+    ///     Connection timeout
+    /// </summary>
+    public TimeSpan? ConnectTimeout { get; init; }
+
+    /// <summary>
     ///     Whether to add resilience policies (retry, circuit breaker)
     /// </summary>
     public bool AddResilience { get; init; }
@@ -66,9 +73,6 @@ public static class ConnectorServiceCollectionExtensions
             // Default strategies
             services.TryAddSingleton<IRetryDelayStrategy, ProductionRetryDelayStrategy>();
             services.TryAddSingleton<IRateLimitingStrategy, ProductionRateLimitingStrategy>();
-
-            // Treatment classification service for consistent bolus/carb classification
-            services.TryAddSingleton<ITreatmentClassificationService, TreatmentClassificationService>();
 
             return services;
         }
@@ -114,21 +118,8 @@ public static class ConnectorServiceCollectionExtensions
             if (!config.Enabled)
                 return null;
 
-            // Resolve server URL if mapping is provided
-            string? serverUrl = null;
-            if (options is { ServerMapping: not null, GetServerRegion: not null })
-            {
-                var region = options.GetServerRegion(config);
-                serverUrl = ConnectorServerResolver.Resolve(
-                    region,
-                    options.ServerMapping,
-                    options.DefaultServer ?? options.ServerMapping.Values.FirstOrDefault() ?? ""
-                );
-            }
-            else if (options.DefaultServer != null)
-            {
-                serverUrl = options.DefaultServer;
-            }
+            // Resolve server URL
+            var serverUrl = ResolveServerUrl(config, options);
 
             // Register HttpClients with configuration
             if (serverUrl != null)
@@ -139,7 +130,8 @@ public static class ConnectorServiceCollectionExtensions
                         options.AdditionalHeaders,
                         options.UserAgent,
                         options.Timeout,
-                        addResilience: options.AddResilience
+                        options.ConnectTimeout,
+                        options.AddResilience
                     );
 
                 services.AddHttpClient<TTokenProvider>()
@@ -148,7 +140,8 @@ public static class ConnectorServiceCollectionExtensions
                         options.AdditionalHeaders,
                         options.UserAgent,
                         options.Timeout,
-                        addResilience: options.AddResilience
+                        options.ConnectTimeout,
+                        options.AddResilience
                     );
             }
             else
@@ -179,21 +172,8 @@ public static class ConnectorServiceCollectionExtensions
             if (!config.Enabled)
                 return null;
 
-            // Resolve server URL if mapping is provided
-            string? serverUrl = null;
-            if (options.ServerMapping != null && options.GetServerRegion != null)
-            {
-                var region = options.GetServerRegion(config);
-                serverUrl = ConnectorServerResolver.Resolve(
-                    region,
-                    options.ServerMapping,
-                    options.DefaultServer ?? options.ServerMapping.Values.FirstOrDefault() ?? ""
-                );
-            }
-            else if (options.DefaultServer != null)
-            {
-                serverUrl = options.DefaultServer;
-            }
+            // Resolve server URL
+            var serverUrl = ResolveServerUrl(config, options);
 
             // Register HttpClient with configuration
             if (serverUrl != null)
@@ -204,7 +184,8 @@ public static class ConnectorServiceCollectionExtensions
                         options.AdditionalHeaders,
                         options.UserAgent,
                         options.Timeout,
-                        addResilience: options.AddResilience
+                        options.ConnectTimeout,
+                        options.AddResilience
                     );
             }
             else
@@ -214,5 +195,163 @@ public static class ConnectorServiceCollectionExtensions
 
             return config;
         }
+
+        /// <summary>
+        ///     Registers a token provider as a singleton, resolving the named HttpClient
+        ///     from IHttpClientFactory and all other constructor dependencies from DI.
+        ///     This replaces the manual factory lambda pattern used across connector installers.
+        /// </summary>
+        /// <typeparam name="TTokenProvider">Token provider type (must have a public constructor)</typeparam>
+        public IServiceCollection AddConnectorTokenProvider<TTokenProvider>()
+            where TTokenProvider : class
+        {
+            services.AddSingleton(sp =>
+            {
+                var factory = sp.GetRequiredService<IHttpClientFactory>();
+                var httpClient = factory.CreateClient(typeof(TTokenProvider).Name);
+                return ActivatorUtilities.CreateInstance<TTokenProvider>(sp, httpClient);
+            });
+
+            return services;
+        }
+
+        /// <summary>
+        ///     Registers a sync executor as a scoped IConnectorSyncExecutor.
+        /// </summary>
+        /// <typeparam name="TSyncExecutor">Sync executor type</typeparam>
+        public IServiceCollection AddConnectorSyncExecutor<TSyncExecutor>()
+            where TSyncExecutor : class, IConnectorSyncExecutor
+        {
+            services.AddScoped<IConnectorSyncExecutor, TSyncExecutor>();
+            return services;
+        }
+
+        /// <summary>
+        ///     Discovers and registers all connector services via assembly scanning.
+        ///     Replaces explicit per-connector AddXxxConnector() calls in Program.cs.
+        /// </summary>
+        /// <param name="configuration">Application configuration</param>
+        /// <param name="backgroundServiceAssembly">
+        ///     Optional assembly to scan for ConnectorBackgroundService implementations.
+        ///     Typically the API assembly (typeof(Program).Assembly).
+        /// </param>
+        public IServiceCollection AddConnectors(
+            IConfiguration configuration,
+            Assembly? backgroundServiceAssembly = null)
+        {
+            // Connector assemblies may not be loaded yet since they're no longer
+            // directly referenced in Program.cs. Load them from the app's base directory.
+            var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            foreach (var dll in Directory.GetFiles(baseDir, "Nocturne.Connectors.*.dll"))
+            {
+                try
+                {
+                    var assemblyName = AssemblyName.GetAssemblyName(dll);
+                    if (AppDomain.CurrentDomain.GetAssemblies()
+                        .All(a => a.GetName().Name != assemblyName.Name))
+                    {
+                        Assembly.LoadFrom(dll);
+                    }
+                }
+                catch
+                {
+                    // Skip assemblies that can't be loaded
+                }
+            }
+
+            var connectorAssemblies = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(a => a.FullName?.Contains("Nocturne.Connectors") == true)
+                .ToList();
+
+            // Discover and invoke all IConnectorInstaller implementations
+            foreach (var assembly in connectorAssemblies)
+            {
+                try
+                {
+                    foreach (var type in assembly.GetTypes())
+                    {
+                        if (type.IsAbstract || type.IsInterface)
+                            continue;
+
+                        if (!typeof(IConnectorInstaller).IsAssignableFrom(type))
+                            continue;
+
+                        var installer = (IConnectorInstaller)Activator.CreateInstance(type)!;
+                        installer.Install(services, configuration);
+                    }
+                }
+                catch (ReflectionTypeLoadException)
+                {
+                    // Some types may not be loadable, skip them
+                }
+            }
+
+            // Auto-register background services
+            if (backgroundServiceAssembly != null)
+            {
+                foreach (var type in backgroundServiceAssembly.GetTypes())
+                {
+                    if (type.IsAbstract || type.IsInterface)
+                        continue;
+
+                    // Check if the type extends ConnectorBackgroundService<TConfig>
+                    var baseType = type.BaseType;
+                    if (baseType is not { IsGenericType: true })
+                        continue;
+
+                    if (baseType.GetGenericTypeDefinition().Name != "ConnectorBackgroundService`1")
+                        continue;
+
+                    // Get TConfig type and check for ConnectorRegistrationAttribute
+                    var configType = baseType.GetGenericArguments()[0];
+                    var registration = configType.GetCustomAttribute<ConnectorRegistrationAttribute>();
+                    if (registration == null)
+                        continue;
+
+                    // Check if the connector is enabled, using the same fallback
+                    // chain as BindConnectorConfiguration: per-connector section
+                    // → global Settings section → default (true)
+                    var connectorName = registration.ConnectorName;
+                    var section = configuration.GetSection($"Parameters:Connectors:{connectorName}");
+                    if (!section.Exists())
+                        section = configuration.GetSection($"Connectors:{connectorName}");
+
+                    var isEnabled = section.GetValue<bool?>("Enabled")
+                        ?? configuration.GetValue<bool?>("Parameters:Connectors:Settings:Enabled")
+                        ?? configuration.GetValue<bool?>("Connectors:Settings:Enabled")
+                        ?? true;
+
+                    if (!isEnabled)
+                        continue;
+
+                    // Register the hosted service
+                    var addHostedServiceMethod = typeof(ServiceCollectionHostedServiceExtensions)
+                        .GetMethods()
+                        .First(m => m.Name == "AddHostedService" && m.GetParameters().Length == 1)
+                        .MakeGenericMethod(type);
+
+                    addHostedServiceMethod.Invoke(null, [services]);
+                }
+            }
+
+            return services;
+        }
+    }
+
+    /// <summary>
+    ///     Resolves the server URL from connector options and configuration.
+    ///     When a server mapping is provided but the region value doesn't match any key,
+    ///     the region value itself is used as the server URL (allowing direct URL configuration).
+    /// </summary>
+    private static string? ResolveServerUrl(BaseConnectorConfiguration config, ConnectorOptions options)
+    {
+        if (options is { ServerMapping: not null, GetServerRegion: not null })
+        {
+            var region = options.GetServerRegion(config);
+            var defaultServer = options.DefaultServer ?? region ?? options.ServerMapping.Values.FirstOrDefault() ?? "";
+            return ConnectorServerResolver.Resolve(region, options.ServerMapping, defaultServer);
+        }
+
+        return options.DefaultServer;
     }
 }

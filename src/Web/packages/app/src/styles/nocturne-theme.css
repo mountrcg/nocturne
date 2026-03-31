@@ -3,10 +3,18 @@
 :root {
   /* Glucose Levels */
   --glucose-in-range: oklch(0.6 0.118 184.704);
+  --glucose-tight-range: oklch(0.72 0.16 150);
   --glucose-low: oklch(0.646 0.222 41.116);
   --glucose-very-low: oklch(0.577 0.245 27.325);
-  --glucose-high: #7928ca;
-  --glucose-very-high: #ff0080;
+  --glucose-high: oklch(0.65 0.18 270);
+  --glucose-very-high: oklch(0.55 0.25 15);
+
+  /* OpenAPS Prediction Lines */
+  --pred-iob: oklch(0.6 0.18 258);       /* blue, was #1e88e5 */
+  --pred-cob: oklch(0.7 0.18 50);        /* orange, was #FB8C00 */
+  --pred-acob: oklch(0.7 0.18 50);       /* orange, was #FB8C00 */
+  --pred-zt: oklch(0.75 0.15 195);       /* teal, was #00d2d2 */
+  --pred-uam: oklch(0.75 0.12 85);       /* yellow-green, was #c9bd60 */
 
   /* Insulin Types */
   --insulin: rgb(30, 150, 252);
@@ -14,6 +22,8 @@
   --insulin-basal: rgba(100, 180, 255, 0.3);
   --insulin-temp-basal: rgba(140, 200, 255, 0.4);
   --insulin-manual-temp-basal: rgba(30, 150, 252, 0.8);
+  --insulin-scheduled-basal: rgb(100, 180, 255); /* Opaque --insulin-basal for chart fills */
+  --insulin-additional-basal: rgb(140, 200, 255); /* Opaque --insulin-temp-basal for chart fills */
 
   /* Carbohydrates */
   --carbs: oklch(0.769 0.188 70.08);
@@ -52,6 +62,13 @@
   --system-event-warning: oklch(0.769 0.188 70.08); /* Yellow - warning */
   --system-event-info: oklch(0.6 0.118 184.704); /* Green - informational */
 
+  /* Glycemia Risk Index (GRI) Zones */
+  --gri-zone-a: oklch(0.72 0.17 145);   /* Green - best glycemia */
+  --gri-zone-b: oklch(0.78 0.15 120);   /* Yellow-green */
+  --gri-zone-c: oklch(0.80 0.16 90);    /* Yellow */
+  --gri-zone-d: oklch(0.70 0.17 55);    /* Orange */
+  --gri-zone-e: oklch(0.60 0.20 25);    /* Red - worst glycemia */
+
   /* Data Exclusion - semi-transparent overlays for excluded data regions */
   --data-exclusion-compression-low: rgba(255, 165, 0, 0.15); /* Orange tint for compression lows */
   --data-exclusion-sensor-error: rgba(255, 0, 0, 0.1); /* Red tint for sensor errors */
@@ -77,10 +94,18 @@
 @theme inline {
   /* Glucose Levels */
   --color-glucose-in-range: var(--glucose-in-range);
+  --color-glucose-tight-range: var(--glucose-tight-range);
   --color-glucose-low: var(--glucose-low);
   --color-glucose-very-low: var(--glucose-very-low);
   --color-glucose-high: var(--glucose-high);
   --color-glucose-very-high: var(--glucose-very-high);
+
+  /* OpenAPS Prediction Lines */
+  --color-pred-iob: var(--pred-iob);
+  --color-pred-cob: var(--pred-cob);
+  --color-pred-acob: var(--pred-acob);
+  --color-pred-zt: var(--pred-zt);
+  --color-pred-uam: var(--pred-uam);
 
   /* Insulin Types */
   --color-insulin: var(--insulin);
@@ -88,6 +113,8 @@
   --color-insulin-basal: var(--insulin-basal);
   --color-insulin-temp-basal: var(--insulin-temp-basal);
   --color-insulin-manual-temp-basal: var(--insulin-manual-temp-basal);
+  --color-insulin-scheduled-basal: var(--insulin-scheduled-basal);
+  --color-insulin-additional-basal: var(--insulin-additional-basal);
 
   /* Carbohydrates */
   --color-carbs: var(--carbs);
@@ -102,4 +129,11 @@
   --color-iob-basal: var(--iob-basal);
   --color-iob-bolus: var(--iob-bolus);
   --color-iob-temporary: var(--iob-temporary);
+
+  /* GRI Zones */
+  --color-gri-zone-a: var(--gri-zone-a);
+  --color-gri-zone-b: var(--gri-zone-b);
+  --color-gri-zone-c: var(--gri-zone-c);
+  --color-gri-zone-d: var(--gri-zone-d);
+  --color-gri-zone-e: var(--gri-zone-e);
 }

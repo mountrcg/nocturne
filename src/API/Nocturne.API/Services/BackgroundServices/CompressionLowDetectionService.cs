@@ -1,8 +1,14 @@
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Multitenancy;
 using Nocturne.Core.Models;
+using Nocturne.Core.Models.Authorization;
+using Nocturne.Infrastructure.Data;
+using Nocturne.Infrastructure.Data.Entities;
 
 namespace Nocturne.API.Services.BackgroundServices;
 
@@ -40,40 +46,14 @@ public class CompressionLowDetectionService : BackgroundService, ICompressionLow
         {
             try
             {
-                // Get wake time and user timezone from settings to schedule detection
-                int wakeTimeHour;
-                TimeZoneInfo userTimeZone;
-                using (var scope = _serviceProvider.CreateScope())
-                {
-                    var uiSettingsService = scope.ServiceProvider.GetRequiredService<IUISettingsService>();
-                    var profileDataService = scope.ServiceProvider.GetRequiredService<IProfileDataService>();
-                    var settings = await uiSettingsService.GetSettingsAsync(stoppingToken);
-                    wakeTimeHour = settings.DataQuality.SleepSchedule.WakeTimeHour;
-
-                    // Resolve user timezone so we schedule in their local time
-                    userTimeZone = await GetUserTimeZoneAsync(profileDataService, stoppingToken);
-                }
-
-                // Calculate next run time in user's local time, then convert to UTC for delay
-                var nowUtc = DateTime.UtcNow;
-                var nowLocal = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, userTimeZone);
-                var nextRunLocal = nowLocal.Date.AddHours(wakeTimeHour).AddMinutes(DetectionDelayMinutes);
-
-                if (nowLocal >= nextRunLocal)
-                    nextRunLocal = nextRunLocal.AddDays(1);
-
-                var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRunLocal, userTimeZone);
-                var delay = nextRunUtc - nowUtc;
-                _logger.LogDebug(
-                    "Next compression low detection scheduled for {NextRunLocal} ({Timezone})",
-                    nextRunLocal, userTimeZone.Id);
-
+                // Compute the next run time by finding the earliest wake time across all tenants.
+                // Each tenant has its own sleep schedule and timezone, so we iterate them to find
+                // the soonest upcoming wake-time + detection delay.
+                var delay = await ComputeNextRunDelayAsync(stoppingToken);
                 await Task.Delay(delay, stoppingToken);
 
-                // Determine "last night" in the user's local timezone
-                var detectionTimeLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, userTimeZone);
-                var lastNight = DateOnly.FromDateTime(detectionTimeLocal.AddDays(-1));
-                await DetectForNightAsync(lastNight, stoppingToken);
+                // Run detection for all tenants
+                await RunForAllTenantsAsync(stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -89,17 +69,152 @@ public class CompressionLowDetectionService : BackgroundService, ICompressionLow
         _logger.LogInformation("Compression Low Detection Service stopped");
     }
 
+    /// <summary>
+    /// Iterates all active tenants and computes the earliest next detection time
+    /// based on each tenant's wake-time setting and timezone. Returns the delay
+    /// until that time. Falls back to a 1-hour delay if no tenants are configured.
+    /// </summary>
+    private async Task<TimeSpan> ComputeNextRunDelayAsync(CancellationToken cancellationToken)
+    {
+        var nowUtc = DateTime.UtcNow;
+        DateTime? earliestNextRunUtc = null;
+        string? earliestTimezoneId = null;
+
+        using var lookupScope = _serviceProvider.CreateScope();
+        var factory = lookupScope.ServiceProvider.GetRequiredService<IDbContextFactory<NocturneDbContext>>();
+        await using var lookupContext = await factory.CreateDbContextAsync(cancellationToken);
+        var tenants = await lookupContext.Tenants.AsNoTracking()
+            .Where(t => t.IsActive)
+            .Select(t => new { t.Id, t.Slug, t.DisplayName })
+            .ToListAsync(cancellationToken);
+
+        foreach (var tenant in tenants)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var tenantAccessor = scope.ServiceProvider.GetRequiredService<ITenantAccessor>();
+                tenantAccessor.SetTenant(new TenantContext(tenant.Id, tenant.Slug, tenant.DisplayName, true));
+
+                var uiSettingsService = scope.ServiceProvider.GetRequiredService<IUISettingsService>();
+                var profileDataService = scope.ServiceProvider.GetRequiredService<IProfileDataService>();
+                var entryService = scope.ServiceProvider.GetRequiredService<IEntryService>();
+
+                var settings = await uiSettingsService.GetSettingsAsync(cancellationToken);
+                var sleepSchedule = settings.DataQuality.SleepSchedule;
+                var wakeTimeHour = sleepSchedule.WakeTimeHour;
+                var lastNightGuess = DateOnly.FromDateTime(nowUtc.AddDays(-1));
+                var userTimeZone = ResolveTimeZone(sleepSchedule.Timezone)
+                    ?? await GetUserTimeZoneFromProfileAsync(profileDataService, cancellationToken)
+                    ?? await InferTimeZoneFromEntriesAsync(entryService, lastNightGuess, cancellationToken)
+                    ?? TimeZoneInfo.Utc;
+
+                var nowLocal = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, userTimeZone);
+                var nextRunLocal = nowLocal.Date.AddHours(wakeTimeHour).AddMinutes(DetectionDelayMinutes);
+
+                if (nowLocal >= nextRunLocal)
+                    nextRunLocal = nextRunLocal.AddDays(1);
+
+                var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRunLocal, userTimeZone);
+
+                if (earliestNextRunUtc == null || nextRunUtc < earliestNextRunUtc)
+                {
+                    earliestNextRunUtc = nextRunUtc;
+                    earliestTimezoneId = userTimeZone.Id;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to compute next run time for tenant {TenantSlug}, skipping", tenant.Slug);
+            }
+        }
+
+        if (earliestNextRunUtc == null)
+        {
+            _logger.LogDebug("No active tenants found for scheduling; retrying in 1 hour");
+            return TimeSpan.FromHours(1);
+        }
+
+        var delay = earliestNextRunUtc.Value - nowUtc;
+        _logger.LogDebug(
+            "Next compression low detection scheduled for {NextRunUtc:u} (earliest tenant timezone: {Timezone})",
+            earliestNextRunUtc.Value, earliestTimezoneId);
+
+        return delay;
+    }
+
+    private async Task RunForAllTenantsAsync(CancellationToken cancellationToken)
+    {
+        // Lookup active tenants using unfiltered context
+        using var lookupScope = _serviceProvider.CreateScope();
+        var factory = lookupScope.ServiceProvider.GetRequiredService<IDbContextFactory<NocturneDbContext>>();
+        await using var lookupContext = await factory.CreateDbContextAsync(cancellationToken);
+        var tenants = await lookupContext.Tenants.AsNoTracking()
+            .Where(t => t.IsActive)
+            .Select(t => new { t.Id, t.Slug, t.DisplayName })
+            .ToListAsync(cancellationToken);
+
+        foreach (var tenant in tenants)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var tenantAccessor = scope.ServiceProvider.GetRequiredService<ITenantAccessor>();
+                tenantAccessor.SetTenant(new TenantContext(tenant.Id, tenant.Slug, tenant.DisplayName, true));
+
+                // Determine "last night" in the user's local timezone
+                var profileDataService = scope.ServiceProvider.GetRequiredService<IProfileDataService>();
+                var entryService = scope.ServiceProvider.GetRequiredService<IEntryService>();
+                var uiSettingsService = scope.ServiceProvider.GetRequiredService<IUISettingsService>();
+                var settings = await uiSettingsService.GetSettingsAsync(cancellationToken);
+                var lastNightGuess = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
+                var userTimeZone = ResolveTimeZone(settings.DataQuality.SleepSchedule.Timezone)
+                    ?? await GetUserTimeZoneFromProfileAsync(profileDataService, cancellationToken)
+                    ?? await InferTimeZoneFromEntriesAsync(entryService, lastNightGuess, cancellationToken)
+                    ?? TimeZoneInfo.Utc;
+                var detectionTimeLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, userTimeZone);
+                var lastNight = DateOnly.FromDateTime(detectionTimeLocal.AddDays(-1));
+
+                await DetectForNightInternalAsync(lastNight, scope.ServiceProvider, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during compression low detection for tenant {TenantSlug}", tenant.Slug);
+            }
+        }
+    }
+
     public async Task<int> DetectForNightAsync(
         DateOnly nightOf,
         CancellationToken cancellationToken = default)
     {
         using var scope = _serviceProvider.CreateScope();
-        var repository = scope.ServiceProvider.GetRequiredService<ICompressionLowRepository>();
-        var entryService = scope.ServiceProvider.GetRequiredService<IEntryService>();
-        var treatmentService = scope.ServiceProvider.GetRequiredService<ITreatmentService>();
-        var notificationService = scope.ServiceProvider.GetRequiredService<IInAppNotificationService>();
-        var profileDataService = scope.ServiceProvider.GetRequiredService<IProfileDataService>();
-        var uiSettingsService = scope.ServiceProvider.GetRequiredService<IUISettingsService>();
+
+        // When called from an HTTP endpoint, the tenant context lives in the request scope.
+        // Propagate it to the new scope so tenant-scoped services (EntryService, ProfileDataService, etc.) work.
+        var httpContextAccessor = scope.ServiceProvider.GetService<IHttpContextAccessor>();
+        var requestTenantAccessor = httpContextAccessor?.HttpContext?.RequestServices.GetService<ITenantAccessor>();
+        if (requestTenantAccessor is { IsResolved: true, Context: not null })
+        {
+            var scopedTenantAccessor = scope.ServiceProvider.GetRequiredService<ITenantAccessor>();
+            scopedTenantAccessor.SetTenant(requestTenantAccessor.Context);
+        }
+
+        return await DetectForNightInternalAsync(nightOf, scope.ServiceProvider, cancellationToken);
+    }
+
+    private async Task<int> DetectForNightInternalAsync(
+        DateOnly nightOf,
+        IServiceProvider scopedProvider,
+        CancellationToken cancellationToken)
+    {
+        var repository = scopedProvider.GetRequiredService<ICompressionLowRepository>();
+        var entryService = scopedProvider.GetRequiredService<IEntryService>();
+        var treatmentService = scopedProvider.GetRequiredService<ITreatmentService>();
+        var notificationService = scopedProvider.GetRequiredService<IInAppNotificationService>();
+        var profileDataService = scopedProvider.GetRequiredService<IProfileDataService>();
+        var uiSettingsService = scopedProvider.GetRequiredService<IUISettingsService>();
+        var tenantAccessor = scopedProvider.GetRequiredService<ITenantAccessor>();
 
         // Check if detection is enabled
         var settings = await uiSettingsService.GetSettingsAsync(cancellationToken);
@@ -121,8 +236,12 @@ public class CompressionLowDetectionService : BackgroundService, ICompressionLow
             return 0;
         }
 
-        // Get user's timezone from profile that was active during the night in question
-        var userTimeZone = await GetUserTimeZoneForNightAsync(profileDataService, nightOf, cancellationToken);
+        // Get user's timezone: prefer UI settings, fall back to profile,
+        // then infer from entry UTC offsets, then UTC
+        var userTimeZone = ResolveTimeZone(sleepSchedule.Timezone)
+            ?? await GetUserTimeZoneFromProfileAsync(profileDataService, nightOf, cancellationToken)
+            ?? await InferTimeZoneFromEntriesAsync(entryService, nightOf, cancellationToken)
+            ?? TimeZoneInfo.Utc;
 
         // Get overnight window in user's local time
         var (windowStart, windowEnd) = TimeZoneHelper.GetOvernightWindow(nightOf, userTimeZone, bedtimeHour, wakeTimeHour);
@@ -184,9 +303,23 @@ public class CompressionLowDetectionService : BackgroundService, ICompressionLow
 
         // Create notification if any suggestions found.
         // Notification uses i18n keys so the frontend can render localized text.
+        // Notifications are keyed by subject ID (not tenant ID). Look up the tenant
+        // owner so the notification is attributed to an actual user.
         if (suggestions.Count > 0)
         {
-            await CreateNotificationAsync(nightOf, suggestions.Count, notificationService, cancellationToken);
+            var ownerId = await GetTenantOwnerSubjectIdAsync(
+                tenantAccessor.TenantId, scopedProvider, cancellationToken);
+
+            if (ownerId != null)
+            {
+                await CreateNotificationAsync(nightOf, suggestions.Count, ownerId, notificationService, cancellationToken);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "No owner found for tenant {TenantId}; skipping compression low notification for night {NightOf}",
+                    tenantAccessor.TenantId, nightOf);
+            }
         }
 
         _logger.LogInformation(
@@ -244,6 +377,7 @@ public class CompressionLowDetectionService : BackgroundService, ICompressionLow
         var nadir = entries[nadirIndex];
         var maxDropRate = 0.0;
         var dropDurationMinutes = 0.0;
+        int? earliestSteepIndex = null;
 
         for (int i = nadirIndex - 1; i >= 0; i--)
         {
@@ -261,6 +395,7 @@ public class CompressionLowDetectionService : BackgroundService, ICompressionLow
             if (dropRate >= MinDropRateMgDlPerMin)
             {
                 dropDurationMinutes = timeDiffMinutes;
+                earliestSteepIndex = i;
             }
             else if (dropDurationMinutes > 0)
             {
@@ -270,6 +405,13 @@ public class CompressionLowDetectionService : BackgroundService, ICompressionLow
                 }
                 break;
             }
+        }
+
+        // The loop exhausted all entries while the drop rate stayed above the threshold.
+        // This is the typical compression low pattern — steep drop all the way through.
+        if (dropDurationMinutes >= MinDropDurationMinutes && earliestSteepIndex.HasValue)
+        {
+            return (earliestSteepIndex.Value, entries[earliestSteepIndex.Value].Sgv!.Value, maxDropRate);
         }
 
         return null;
@@ -395,13 +537,14 @@ public class CompressionLowDetectionService : BackgroundService, ICompressionLow
     private async Task CreateNotificationAsync(
         DateOnly nightOf,
         int count,
+        string userId,
         IInAppNotificationService notificationService,
         CancellationToken cancellationToken)
     {
         // Use i18n keys for title/subtitle so the frontend renders localized text.
         // The metadata contains the count and nightOf for interpolation.
         await notificationService.CreateNotificationAsync(
-            userId: "default", // TODO: Multi-user support
+            userId: userId,
             type: InAppNotificationType.CompressionLowReview,
             urgency: NotificationUrgency.Info,
             title: "compression_low_detected",
@@ -425,7 +568,28 @@ public class CompressionLowDetectionService : BackgroundService, ICompressionLow
             cancellationToken: cancellationToken);
     }
 
-    private async Task<TimeZoneInfo> GetUserTimeZoneAsync(
+    /// <summary>
+    /// Resolves a timezone ID string to a TimeZoneInfo, returning null if the ID is empty or invalid.
+    /// </summary>
+    private static TimeZoneInfo? ResolveTimeZone(string? timezoneId)
+    {
+        if (string.IsNullOrEmpty(timezoneId))
+            return null;
+
+        var tz = TimeZoneHelper.GetTimeZoneInfoFromId(timezoneId);
+        // GetTimeZoneInfoFromId returns UTC as fallback for unknown IDs;
+        // only treat it as resolved if the input was explicitly "UTC"
+        if (tz == TimeZoneInfo.Utc && !timezoneId.Equals("UTC", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return tz;
+    }
+
+    /// <summary>
+    /// Gets the user's timezone from the Nightscout profile active at the current time.
+    /// Returns null if the profile has no timezone set.
+    /// </summary>
+    private async Task<TimeZoneInfo?> GetUserTimeZoneFromProfileAsync(
         IProfileDataService profileDataService,
         CancellationToken cancellationToken)
     {
@@ -434,19 +598,20 @@ public class CompressionLowDetectionService : BackgroundService, ICompressionLow
             var profile = await profileDataService.GetProfileAtTimestampAsync(
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), cancellationToken);
             var timezoneId = profile?.Store?.Values.FirstOrDefault()?.Timezone;
-
-            if (!string.IsNullOrEmpty(timezoneId))
-                return TimeZoneHelper.GetTimeZoneInfoFromId(timezoneId);
+            return ResolveTimeZone(timezoneId);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get user timezone, using UTC");
+            _logger.LogWarning(ex, "Failed to get user timezone from profile");
+            return null;
         }
-
-        return TimeZoneInfo.Utc;
     }
 
-    private async Task<TimeZoneInfo> GetUserTimeZoneForNightAsync(
+    /// <summary>
+    /// Gets the user's timezone from the Nightscout profile active during a specific night.
+    /// Returns null if the profile has no timezone set.
+    /// </summary>
+    private async Task<TimeZoneInfo?> GetUserTimeZoneFromProfileAsync(
         IProfileDataService profileDataService,
         DateOnly nightOf,
         CancellationToken cancellationToken)
@@ -458,15 +623,82 @@ public class CompressionLowDetectionService : BackgroundService, ICompressionLow
 
             var profile = await profileDataService.GetProfileAtTimestampAsync(approximateMills, cancellationToken);
             var timezoneId = profile?.Store?.Values.FirstOrDefault()?.Timezone;
-
-            if (!string.IsNullOrEmpty(timezoneId))
-                return TimeZoneHelper.GetTimeZoneInfoFromId(timezoneId);
+            return ResolveTimeZone(timezoneId);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get user timezone for night {NightOf}, using UTC", nightOf);
+            _logger.LogWarning(ex, "Failed to get user timezone from profile for night {NightOf}", nightOf);
+            return null;
         }
+    }
 
-        return TimeZoneInfo.Utc;
+    /// <summary>
+    /// Infers the user's timezone from the UtcOffset field on recent entries near the target night.
+    /// Returns null if no entries with offset data are found.
+    /// </summary>
+    private async Task<TimeZoneInfo?> InferTimeZoneFromEntriesAsync(
+        IEntryService entryService,
+        DateOnly nightOf,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Query a small number of entries around midnight of the target night (in UTC)
+            var midnightUtcMills = new DateTimeOffset(nightOf.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero)
+                .ToUnixTimeMilliseconds();
+            var entries = await entryService.GetEntriesAsync(
+                find: $"{{\"mills\":{{\"$gte\":{midnightUtcMills - 12 * 3600000},\"$lte\":{midnightUtcMills + 12 * 3600000}}}}}",
+                count: 10,
+                skip: 0,
+                cancellationToken: cancellationToken);
+
+            var utcOffset = entries
+                .Where(e => e.UtcOffset.HasValue && e.UtcOffset.Value != 0)
+                .Select(e => e.UtcOffset!.Value)
+                .FirstOrDefault();
+
+            if (utcOffset == 0)
+                return null;
+
+            var offset = TimeSpan.FromMinutes(utcOffset);
+            var tz = TimeZoneInfo.CreateCustomTimeZone(
+                $"Entry-UTC{(offset >= TimeSpan.Zero ? "+" : "")}{offset.Hours:D2}:{offset.Minutes:D2}",
+                offset,
+                $"UTC{(offset >= TimeSpan.Zero ? "+" : "")}{offset.Hours}:{offset.Minutes:D2}",
+                $"UTC{(offset >= TimeSpan.Zero ? "+" : "")}{offset.Hours}:{offset.Minutes:D2}");
+
+            _logger.LogInformation(
+                "Inferred timezone UTC{Offset} from entry data for night {NightOf}",
+                (offset >= TimeSpan.Zero ? "+" : "") + $"{offset.Hours}:{offset.Minutes:D2}", nightOf);
+
+            return tz;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to infer timezone from entries for night {NightOf}", nightOf);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Looks up the subject ID of the tenant owner. Notifications require a real
+    /// subject/user ID (not a tenant ID) so they can be queried by the authenticated
+    /// user on the frontend.
+    /// </summary>
+    private async Task<string?> GetTenantOwnerSubjectIdAsync(
+        Guid tenantId,
+        IServiceProvider scopedProvider,
+        CancellationToken cancellationToken)
+    {
+        var factory = scopedProvider.GetRequiredService<IDbContextFactory<NocturneDbContext>>();
+        await using var context = await factory.CreateDbContextAsync(cancellationToken);
+
+        var ownerSubjectId = await context.TenantMembers.AsNoTracking()
+            .Where(tm => tm.TenantId == tenantId
+                && tm.MemberRoles.Any(mr => mr.TenantRole.Slug == TenantPermissions.SeedRoles.Owner))
+            .Select(tm => tm.SubjectId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return ownerSubjectId == Guid.Empty ? null : ownerSubjectId.ToString();
     }
 }

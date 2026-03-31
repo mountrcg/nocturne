@@ -3,8 +3,8 @@
     "aspire": {
       "command": "aspire",
       "args": [
-        "mcp",
-        "start"
+        "agent",
+        "mcp"
       ]
     },
     "playwright": {
@@ -12,6 +12,14 @@
       "args": [
         "-y",
         "@playwright/mcp@latest"
+      ]
+    },
+    "nocturne": {
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "src/Tools/Nocturne.Tools.McpServer"
       ]
     }
   }

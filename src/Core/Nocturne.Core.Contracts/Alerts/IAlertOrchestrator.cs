@@ -4,9 +4,9 @@ namespace Nocturne.Core.Contracts.Alerts;
 
 public interface IAlertOrchestrator
 {
-    Task EvaluateAndProcessEntriesAsync(
-        IEnumerable<Entry> entries,
-        string? userId,
-        CancellationToken cancellationToken = default
-    );
+    /// <summary>
+    /// Evaluate all enabled rules for the current tenant against the latest sensor data.
+    /// Called by the glucose ingest pipeline on each new reading.
+    /// </summary>
+    Task EvaluateAsync(SensorContext context, CancellationToken ct);
 }

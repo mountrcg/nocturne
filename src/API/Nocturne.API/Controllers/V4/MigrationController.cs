@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Nocturne.API.Attributes;
+using OpenApi.Remote.Attributes;
 using Nocturne.API.Services.Migration;
 
 namespace Nocturne.API.Controllers.V4;
@@ -27,7 +27,7 @@ public class MigrationController : ControllerBase
     /// Test a migration source connection
     /// </summary>
     [HttpPost("test")]
-    [RemoteCommand]
+    [RemoteForm]
     [ProducesResponseType(typeof(TestMigrationConnectionResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<TestMigrationConnectionResult>> TestConnection(
@@ -42,7 +42,7 @@ public class MigrationController : ControllerBase
     /// Start a new migration job
     /// </summary>
     [HttpPost("start")]
-    [RemoteCommand]
+    [RemoteForm]
     [ProducesResponseType(typeof(MigrationJobInfo), StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<MigrationJobInfo>> StartMigration(
@@ -54,18 +54,18 @@ public class MigrationController : ControllerBase
         {
             if (string.IsNullOrEmpty(request.NightscoutUrl))
             {
-                return BadRequest("Nightscout URL is required for API mode");
+                return Problem(detail: "Nightscout URL is required for API mode", statusCode: 400, title: "Bad Request");
             }
         }
         else
         {
             if (string.IsNullOrEmpty(request.MongoConnectionString))
             {
-                return BadRequest("MongoDB connection string is required for MongoDB mode");
+                return Problem(detail: "MongoDB connection string is required for MongoDB mode", statusCode: 400, title: "Bad Request");
             }
             if (string.IsNullOrEmpty(request.MongoDatabaseName))
             {
-                return BadRequest("MongoDB database name is required for MongoDB mode");
+                return Problem(detail: "MongoDB database name is required for MongoDB mode", statusCode: 400, title: "Bad Request");
             }
         }
 

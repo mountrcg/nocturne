@@ -8,8 +8,17 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// Maps to Nocturne.Core.Models.StateSpan
 /// </summary>
 [Table("state_spans")]
-public class StateSpanEntity
+public class StateSpanEntity : ITenantScoped
 {
+    /// <summary>
+    /// Identifier of the tenant this state span belongs to
+    /// </summary>
+    /// <summary>
+    /// The unique identifier of the tenant this record belongs to.
+    /// </summary>
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
+
     /// <summary>
     /// Primary key - UUID Version 7 for time-ordered, globally unique identification
     /// </summary>
@@ -33,16 +42,16 @@ public class StateSpanEntity
     public string State { get; set; } = string.Empty;
 
     /// <summary>
-    /// When this state began (Unix milliseconds)
+    /// When this state began as UTC DateTime (timestamptz)
     /// </summary>
-    [Column("start_mills")]
-    public long StartMills { get; set; }
+    [Column("start_timestamp")]
+    public DateTime StartTimestamp { get; set; }
 
     /// <summary>
-    /// When this state ended (Unix milliseconds, null = active)
+    /// When this state ended as UTC DateTime (timestamptz, null = active)
     /// </summary>
-    [Column("end_mills")]
-    public long? EndMills { get; set; }
+    [Column("end_timestamp")]
+    public DateTime? EndTimestamp { get; set; }
 
     /// <summary>
     /// Data source identifier (e.g., "glooko", "nightscout")
@@ -63,6 +72,12 @@ public class StateSpanEntity
     [Column("original_id")]
     [MaxLength(255)]
     public string? OriginalId { get; set; }
+
+    /// <summary>
+    /// ID of the span that superseded this one (self-referencing FK)
+    /// </summary>
+    [Column("superseded_by_id")]
+    public Guid? SupersededById { get; set; }
 
     /// <summary>
     /// System tracking: when record was created

@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Nocturne.Core.Models.V4;
 
 namespace Nocturne.Core.Models;
 
@@ -150,6 +151,12 @@ public class GlycemicVariability
     public double EstimatedA1c { get; set; }
 
     /// <summary>
+    /// Glucose Management Indicator - modern replacement for estimated A1c
+    /// Based on: GMI (%) = 3.31 + (0.02392 x mean glucose in mg/dL)
+    /// </summary>
+    public GlucoseManagementIndicator? Gmi { get; set; }
+
+    /// <summary>
     /// Mean total daily glucose change in mg/dL - sum of absolute glucose changes divided by number of days
     /// </summary>
     public double MeanTotalDailyChange { get; set; }
@@ -166,9 +173,9 @@ public class GlycemicVariability
 public class GlycemicThresholds
 {
     /// <summary>
-    /// Threshold for severe low glucose (default: 54 mg/dL)
+    /// Threshold for very low glucose (default: 54 mg/dL)
     /// </summary>
-    public double SevereLow { get; set; } = 54;
+    public double VeryLow { get; set; } = 54;
 
     /// <summary>
     /// Threshold for low glucose (default: 70 mg/dL)
@@ -201,9 +208,9 @@ public class GlycemicThresholds
     public double High { get; set; } = 180;
 
     /// <summary>
-    /// Threshold for severe high glucose (default: 250 mg/dL)
+    /// Threshold for very high glucose (default: 250 mg/dL)
     /// </summary>
-    public double SevereHigh { get; set; } = 250;
+    public double VeryHigh { get; set; } = 250;
 }
 
 /// <summary>
@@ -259,9 +266,9 @@ public class TimeInRangeDetailedStats
 public class TimeInRangePercentages
 {
     /// <summary>
-    /// Percentage of time in severe low range (less than 54 mg/dL)
+    /// Percentage of time in very low range (less than 54 mg/dL)
     /// </summary>
-    public double SevereLow { get; set; }
+    public double VeryLow { get; set; }
 
     /// <summary>
     /// Percentage of time in low range (54-70 mg/dL)
@@ -284,9 +291,9 @@ public class TimeInRangePercentages
     public double High { get; set; }
 
     /// <summary>
-    /// Percentage of time in severe high range (greater than 250 mg/dL)
+    /// Percentage of time in very high range (greater than 250 mg/dL)
     /// </summary>
-    public double SevereHigh { get; set; }
+    public double VeryHigh { get; set; }
 }
 
 /// <summary>
@@ -320,14 +327,9 @@ public class ExtendedTimeInRangePercentages
     public double High { get; set; }
 
     /// <summary>
-    /// Percentage of time in very high range (200-220 mg/dL)
+    /// Percentage of time in very high range (200+ mg/dL)
     /// </summary>
     public double VeryHigh { get; set; }
-
-    /// <summary>
-    /// Percentage of time in severe high range (greater than 220 mg/dL)
-    /// </summary>
-    public double SevereHigh { get; set; }
 }
 
 /// <summary>
@@ -336,9 +338,9 @@ public class ExtendedTimeInRangePercentages
 public class TimeInRangeDurations
 {
     /// <summary>
-    /// Duration in severe low range (minutes)
+    /// Duration in very low range (minutes)
     /// </summary>
-    public double SevereLow { get; set; }
+    public double VeryLow { get; set; }
 
     /// <summary>
     /// Duration in low range (minutes)
@@ -361,9 +363,9 @@ public class TimeInRangeDurations
     public double High { get; set; }
 
     /// <summary>
-    /// Duration in severe high range (minutes)
+    /// Duration in very high range (minutes)
     /// </summary>
-    public double SevereHigh { get; set; }
+    public double VeryHigh { get; set; }
 }
 
 /// <summary>
@@ -372,9 +374,9 @@ public class TimeInRangeDurations
 public class TimeInRangeEpisodes
 {
     /// <summary>
-    /// Number of severe low episodes
+    /// Number of very low episodes
     /// </summary>
-    public int SevereLow { get; set; }
+    public int VeryLow { get; set; }
 
     /// <summary>
     /// Number of low episodes
@@ -387,9 +389,9 @@ public class TimeInRangeEpisodes
     public int High { get; set; }
 
     /// <summary>
-    /// Number of severe high episodes
+    /// Number of very high episodes
     /// </summary>
-    public int SevereHigh { get; set; }
+    public int VeryHigh { get; set; }
 }
 
 /// <summary>
@@ -514,9 +516,19 @@ public class InsulinTotals
     public double Bolus { get; set; }
 
     /// <summary>
-    /// Total basal insulin in units
+    /// Total basal insulin in units (scheduled + additional)
     /// </summary>
     public double Basal { get; set; }
+
+    /// <summary>
+    /// Scheduled (profile) basal insulin in units
+    /// </summary>
+    public double ScheduledBasal { get; set; }
+
+    /// <summary>
+    /// Additional basal insulin above scheduled rate (TBR - scheduled)
+    /// </summary>
+    public double AdditionalBasal { get; set; }
 }
 
 /// <summary>
@@ -741,9 +753,19 @@ public class GlucoseAnalytics
     public DataQuality DataQuality { get; set; } = new();
 
     /// <summary>
+    /// Reliability assessment for this analysis block
+    /// </summary>
+    public StatisticReliability? Reliability { get; set; }
+
+    /// <summary>
     /// Time period of the analysis
     /// </summary>
     public AnalysisTime Time { get; set; } = new();
+
+    /// <summary>
+    /// Clinical assessment with insights, strengths, and priority areas
+    /// </summary>
+    public ClinicalTargetAssessment? ClinicalAssessment { get; set; }
 }
 
 /// <summary>
@@ -842,6 +864,16 @@ public class PeriodStatistics
     /// Indicates if there was sufficient data for meaningful statistics
     /// </summary>
     public bool HasSufficientData { get; set; }
+
+    /// <summary>
+    /// Glucose Management Indicator for this period
+    /// </summary>
+    public GlucoseManagementIndicator? Gmi { get; set; }
+
+    /// <summary>
+    /// Reliability assessment for this period's statistics
+    /// </summary>
+    public StatisticReliability? Reliability { get; set; }
 
     /// <summary>
     /// Number of glucose entries in this period
@@ -1004,21 +1036,24 @@ public class GlucoseManagementIndicator
     public double MeanGlucose { get; set; }
 
     /// <summary>Interpretation of the GMI value</summary>
-    public string Interpretation { get; set; } = string.Empty;
+    public GlucoseManagementIndicatorLevel Interpretation { get; set; }
+
+    /// <summary>Reliability assessment for this GMI calculation</summary>
+    public StatisticReliability? Reliability { get; set; }
 
     /// <summary>
     /// GMI interpretation categories based on ADA Standards
     /// </summary>
-    public static string GetInterpretation(double gmi)
+    public static GlucoseManagementIndicatorLevel GetInterpretation(double gmi)
     {
         return gmi switch
         {
-            < 5.7 => "Non-diabetic range",
-            < 6.5 => "Prediabetes range",
-            < 7.0 => "Well-controlled diabetes",
-            < 8.0 => "Moderate control",
-            < 9.0 => "Suboptimal control",
-            _ => "Poor control - intervention recommended",
+            < 5.7 => GlucoseManagementIndicatorLevel.NonDiabetic,
+            < 6.5 => GlucoseManagementIndicatorLevel.Prediabetes,
+            < 7.0 => GlucoseManagementIndicatorLevel.WellControlled,
+            < 8.0 => GlucoseManagementIndicatorLevel.ModerateControl,
+            < 9.0 => GlucoseManagementIndicatorLevel.SuboptimalControl,
+            _ => GlucoseManagementIndicatorLevel.PoorControl,
         };
     }
 }
@@ -1043,7 +1078,7 @@ public class GlycemicRiskIndex
     public GRIZone Zone { get; set; }
 
     /// <summary>Interpretation of the GRI score</summary>
-    public string Interpretation { get; set; } = string.Empty;
+    public GlycomicRiskInterpretation Interpretation { get; set; }
 }
 
 /// <summary>
@@ -1428,6 +1463,26 @@ public enum TrendDirection
 }
 
 /// <summary>
+/// Reliability metadata for a statistics analysis block.
+/// Provides raw facts so the frontend can compose a plain-English message
+/// when the data doesn't meet clinical reliability criteria.
+/// </summary>
+public class StatisticReliability
+{
+    /// <summary>Whether the data meets clinical reliability criteria for this analysis</summary>
+    public bool MeetsReliabilityCriteria { get; set; }
+
+    /// <summary>Number of days with glucose data in this analysis window</summary>
+    public int DaysOfData { get; set; }
+
+    /// <summary>Minimum days recommended by clinical guidelines for reliable results</summary>
+    public int RecommendedMinimumDays { get; set; }
+
+    /// <summary>Number of glucose readings used in this analysis</summary>
+    public int ReadingCount { get; set; }
+}
+
+/// <summary>
 /// Comparison between two time periods
 /// </summary>
 public class TrendComparison
@@ -1524,6 +1579,18 @@ public class TargetAssessment
 }
 
 /// <summary>
+/// Localized insight with key and context data for frontend formatting
+/// </summary>
+public class LocalizedInsight
+{
+    /// <summary>The insight key for frontend localization</summary>
+    public InsightKey Key { get; set; }
+
+    /// <summary>Context data for message formatting (e.g., actual values, targets)</summary>
+    public Dictionary<string, double> Context { get; set; } = new();
+}
+
+/// <summary>
 /// Comprehensive clinical target assessment
 /// </summary>
 public class ClinicalTargetAssessment
@@ -1559,16 +1626,16 @@ public class ClinicalTargetAssessment
     public int TotalTargets { get; set; }
 
     /// <summary>Overall assessment category</summary>
-    public string OverallAssessment { get; set; } = string.Empty;
+    public ClinicalAssessmentLevel OverallAssessment { get; set; }
 
-    /// <summary>List of actionable insights/recommendations</summary>
-    public List<string> ActionableInsights { get; set; } = new();
+    /// <summary>List of actionable insights/recommendations with localization keys and context</summary>
+    public List<LocalizedInsight> ActionableInsights { get; set; } = new();
 
-    /// <summary>Priority areas for improvement</summary>
-    public List<string> PriorityAreas { get; set; } = new();
+    /// <summary>Priority areas for improvement with localization keys and context</summary>
+    public List<LocalizedInsight> PriorityAreas { get; set; } = new();
 
-    /// <summary>Strengths/achievements to acknowledge</summary>
-    public List<string> Strengths { get; set; } = new();
+    /// <summary>Strengths/achievements to acknowledge with localization keys and context</summary>
+    public List<LocalizedInsight> Strengths { get; set; } = new();
 }
 
 /// <summary>
@@ -1603,6 +1670,9 @@ public class DataSufficiencyAssessment
     /// <summary>Longest data gap in hours</summary>
     public double LongestGapHours { get; set; }
 
+    /// <summary>Data sufficiency status (use this for localization on frontend)</summary>
+    public DataSufficiencyStatus Status { get; set; } = DataSufficiencyStatus.Sufficient;
+
     /// <summary>Warning message if data is insufficient</summary>
     public string WarningMessage { get; set; } = string.Empty;
 
@@ -1634,7 +1704,7 @@ public class ExtendedGlucoseAnalytics : GlucoseAnalytics
     public HyperglycemiaAnalysis HyperglycemiaAnalysis { get; set; } = new();
 
     /// <summary>Clinical target assessment</summary>
-    public ClinicalTargetAssessment ClinicalAssessment { get; set; } = new();
+    public new ClinicalTargetAssessment ClinicalAssessment { get; set; } = new();
 
     /// <summary>Data sufficiency assessment</summary>
     public DataSufficiencyAssessment DataSufficiency { get; set; } = new();
@@ -1731,9 +1801,19 @@ public class InsulinDeliveryStatistics
     public double TotalBolus { get; set; }
 
     /// <summary>
-    /// Total basal insulin in units for the period
+    /// Total basal insulin in units for the period (scheduled + additional)
     /// </summary>
     public double TotalBasal { get; set; }
+
+    /// <summary>
+    /// Scheduled (profile) basal insulin in units for the period
+    /// </summary>
+    public double ScheduledBasal { get; set; }
+
+    /// <summary>
+    /// Additional basal insulin above scheduled rate (TBR - scheduled) for the period
+    /// </summary>
+    public double AdditionalBasal { get; set; }
 
     /// <summary>
     /// Total insulin (bolus + basal) for the period
@@ -1819,6 +1899,21 @@ public class InsulinDeliveryStatistics
     /// Number of treatments with both carbs and bolus
     /// </summary>
     public int CarbBolusCount { get; set; }
+
+    /// <summary>
+    /// Number of algorithm-delivered micro-boluses (SMBs) in the period
+    /// </summary>
+    public int MicroBolusCount { get; set; }
+
+    /// <summary>
+    /// Total insulin delivered via micro-boluses (SMBs) in units
+    /// </summary>
+    public double MicroBolusInsulin { get; set; }
+
+    /// <summary>
+    /// Reliability assessment for insulin delivery statistics
+    /// </summary>
+    public StatisticReliability? Reliability { get; set; }
 }
 
 /// <summary>
@@ -2041,6 +2136,10 @@ public class SiteChangeImpactAnalysis
     [JsonPropertyName("siteChangeCount")]
     public int SiteChangeCount { get; set; }
 
+    /// <summary>Average number of days between site changes</summary>
+    [JsonPropertyName("averageDaysBetweenChanges")]
+    public double? AverageDaysBetweenChanges { get; set; }
+
     /// <summary>Time points with averaged glucose data</summary>
     [JsonPropertyName("dataPoints")]
     public List<SiteChangeImpactDataPoint> DataPoints { get; set; } = new();
@@ -2064,4 +2163,131 @@ public class SiteChangeImpactAnalysis
     /// <summary>Whether sufficient data exists for meaningful analysis</summary>
     [JsonPropertyName("hasSufficientData")]
     public bool HasSufficientData { get; set; }
+}
+
+/// <summary>
+/// Top-level DTO for AID (Automated Insulin Delivery) system metrics returned by the API endpoint.
+/// Contains time-weighted aggregates across mixed device segments within a report period.
+/// </summary>
+public class AidSystemMetrics
+{
+    /// <summary>Percentage of time CGM was in use</summary>
+    [JsonPropertyName("cgmUsePercent")]
+    public double? CgmUsePercent { get; set; }
+
+    /// <summary>Time-weighted pump use percentage across segments</summary>
+    [JsonPropertyName("pumpUsePercent")]
+    public double? PumpUsePercent { get; set; }
+
+    /// <summary>Time-weighted AID active percentage across segments</summary>
+    [JsonPropertyName("aidActivePercent")]
+    public double? AidActivePercent { get; set; }
+
+    /// <summary>CGM data completeness percentage</summary>
+    [JsonPropertyName("cgmActivePercent")]
+    public double? CgmActivePercent { get; set; }
+
+    /// <summary>Lower target bound in mg/dL</summary>
+    [JsonPropertyName("targetLow")]
+    public double? TargetLow { get; set; }
+
+    /// <summary>Upper target bound in mg/dL</summary>
+    [JsonPropertyName("targetHigh")]
+    public double? TargetHigh { get; set; }
+
+    /// <summary>Number of DeviceEvent SiteChange events in the period</summary>
+    [JsonPropertyName("siteChangeCount")]
+    public int? SiteChangeCount { get; set; }
+
+    /// <summary>Per-device time segments with individual metrics</summary>
+    [JsonPropertyName("segments")]
+    public List<AidTimeSegment> Segments { get; set; } = new();
+}
+
+/// <summary>
+/// One segment in the time-weighted AID breakdown, representing a period where
+/// a single algorithm was active on a specific device.
+/// </summary>
+public class AidTimeSegment
+{
+    /// <summary>Which AID algorithm was active during this segment</summary>
+    [JsonPropertyName("algorithm")]
+    public AidAlgorithm Algorithm { get; set; }
+
+    /// <summary>Start of the segment</summary>
+    [JsonPropertyName("startDate")]
+    public DateTime StartDate { get; set; }
+
+    /// <summary>End of the segment</summary>
+    [JsonPropertyName("endDate")]
+    public DateTime EndDate { get; set; }
+
+    /// <summary>Duration of the segment in hours</summary>
+    [JsonPropertyName("durationHours")]
+    public double DurationHours { get; set; }
+
+    /// <summary>Computed metrics for this segment</summary>
+    [JsonPropertyName("metrics")]
+    public AidSegmentMetrics Metrics { get; set; } = new();
+}
+
+/// <summary>
+/// Metrics computed by a strategy for a single AID time segment.
+/// </summary>
+public class AidSegmentMetrics
+{
+    /// <summary>Percentage of time AID was active in this segment</summary>
+    [JsonPropertyName("aidActivePercent")]
+    public double? AidActivePercent { get; set; }
+
+    /// <summary>Percentage of time pump was in use in this segment</summary>
+    [JsonPropertyName("pumpUsePercent")]
+    public double? PumpUsePercent { get; set; }
+
+    /// <summary>Number of loop iterations (applicable to open-source AIDs)</summary>
+    [JsonPropertyName("loopCycleCount")]
+    public int? LoopCycleCount { get; set; }
+
+    /// <summary>Number of enacted suggestions</summary>
+    [JsonPropertyName("enactedCount")]
+    public int? EnactedCount { get; set; }
+}
+
+/// <summary>
+/// Input context for a strategy's Calculate method, containing the algorithm,
+/// time window, and pre-sliced data for a single detection segment.
+/// </summary>
+public class AidDetectionContext
+{
+    /// <summary>Which AID algorithm to detect metrics for</summary>
+    public AidAlgorithm Algorithm { get; set; }
+
+    /// <summary>Start of the detection window</summary>
+    public DateTime StartDate { get; set; }
+
+    /// <summary>End of the detection window</summary>
+    public DateTime EndDate { get; set; }
+
+    /// <summary>APS snapshots within the segment window (for OS AID strategies)</summary>
+    public IReadOnlyList<V4.ApsSnapshot> ApsSnapshots { get; set; } = [];
+
+    /// <summary>Temp basals within the segment window (for TBR-based strategies)</summary>
+    public IReadOnlyList<V4.TempBasal> TempBasals { get; set; } = [];
+}
+
+/// <summary>
+/// Maps a patient device to a time segment for orchestration.
+/// Used to split a report period into per-device windows before
+/// dispatching to algorithm-specific strategies.
+/// </summary>
+public class DeviceSegmentInput
+{
+    /// <summary>Which AID algorithm this device uses</summary>
+    public AidAlgorithm Algorithm { get; set; }
+
+    /// <summary>Start of the device's active window</summary>
+    public DateTime StartDate { get; set; }
+
+    /// <summary>End of the device's active window</summary>
+    public DateTime EndDate { get; set; }
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Nocturne.API.Attributes;
 using Nocturne.API.Extensions;
@@ -6,7 +7,7 @@ using Nocturne.Core.Contracts;
 using Nocturne.Core.Contracts.Alerts;
 using Nocturne.Core.Models;
 using Nocturne.Core.Models.Extensions;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
 
 namespace Nocturne.API.Controllers.V3;
 
@@ -16,21 +17,23 @@ namespace Nocturne.API.Controllers.V3;
 /// </summary>
 [ApiController]
 [Route("api/v3/[controller]")]
+[Authorize]
 public class EntriesController : BaseV3Controller<Entry>
 {
+    private readonly IEntryRepository _entries;
     private readonly IEntryService _entryService;
     private readonly IAlertOrchestrator _alertOrchestrator;
 
     public EntriesController(
-        IPostgreSqlService postgreSqlService,
-        IDataFormatService dataFormatService,
+        IEntryRepository entries,
         IDocumentProcessingService documentProcessingService,
         IEntryService entryService,
         IAlertOrchestrator alertOrchestrator,
         ILogger<EntriesController> logger
     )
-        : base(postgreSqlService, dataFormatService, documentProcessingService, logger)
+        : base(documentProcessingService, logger)
     {
+        _entries = entries;
         _entryService = entryService;
         _alertOrchestrator = alertOrchestrator;
     }
@@ -40,6 +43,7 @@ public class EntriesController : BaseV3Controller<Entry>
     /// </summary>
     /// <returns>V3 entries collection response</returns>
     [HttpGet]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/entries")]
     [ProducesResponseType(typeof(V3CollectionResponse<object>), 200)]
     [ProducesResponseType(typeof(V3ErrorResponse), 400)]
@@ -71,7 +75,7 @@ public class EntriesController : BaseV3Controller<Entry>
             var reverseResults = !hasSortDesc && ExtractSortDirection(parameters.Sort);
 
             // Get entries using existing V1 backend with V3 parameters
-            var entries = await _postgreSqlService.GetEntriesWithAdvancedFilterAsync(
+            var entries = await _entries.GetEntriesWithAdvancedFilterAsync(
                 type: type,
                 count: parameters.Limit,
                 skip: parameters.Offset,
@@ -122,6 +126,7 @@ public class EntriesController : BaseV3Controller<Entry>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Single entry in V3 format</returns>
     [HttpGet("{id}")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/entries/:id")]
     [ProducesResponseType(typeof(Entry), 200)]
     [ProducesResponseType(typeof(V3ErrorResponse), 404)]
@@ -135,7 +140,7 @@ public class EntriesController : BaseV3Controller<Entry>
 
         try
         {
-            var entry = await _postgreSqlService.GetEntryByIdAsync(id, cancellationToken);
+            var entry = await _entries.GetEntryByIdAsync(id, cancellationToken);
 
             if (entry == null)
             {
@@ -233,19 +238,7 @@ public class EntriesController : BaseV3Controller<Entry>
 
             _logger.LogDebug("Successfully created V3 entry {Id}", createdEntry.Id);
 
-            try
-            {
-                var userId = GetUserId();
-                await _alertOrchestrator.EvaluateAndProcessEntriesAsync(
-                    createdEntries,
-                    userId,
-                    cancellationToken
-                );
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogWarning(ex, "Failed to process alerts for V3 entry creation");
-            }
+            await EvaluateAlertsAsync(new[] { createdEntry }, cancellationToken);
 
             // Set location header for created resource
             Response.Headers["Location"] = $"/api/v3/entries/{createdEntry.Id}";
@@ -326,19 +319,7 @@ public class EntriesController : BaseV3Controller<Entry>
                 createdEntries.Count()
             );
 
-            try
-            {
-                var userId = GetUserId();
-                await _alertOrchestrator.EvaluateAndProcessEntriesAsync(
-                    createdEntries,
-                    userId,
-                    cancellationToken
-                );
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogWarning(ex, "Failed to process alerts for V3 bulk entries");
-            }
+            await EvaluateAlertsAsync(createdEntries.ToArray(), cancellationToken);
 
             return StatusCode(201, createdEntries.ToV3Responses());
         }
@@ -393,7 +374,7 @@ public class EntriesController : BaseV3Controller<Entry>
             var processedEntry = _documentProcessingService.ProcessEntry(entry);
 
             // Update in database
-            var updatedEntry = await _postgreSqlService.UpdateEntryAsync(
+            var updatedEntry = await _entries.UpdateEntryAsync(
                 id,
                 processedEntry,
                 cancellationToken
@@ -444,7 +425,7 @@ public class EntriesController : BaseV3Controller<Entry>
 
         try
         {
-            var deleted = await _postgreSqlService.DeleteEntryAsync(id, cancellationToken);
+            var deleted = await _entries.DeleteEntryAsync(id, cancellationToken);
 
             if (!deleted)
             {
@@ -470,6 +451,7 @@ public class EntriesController : BaseV3Controller<Entry>
     /// Get entries modified since a given timestamp (for AAPS incremental sync)
     /// </summary>
     [HttpGet("history/{lastModified:long}")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/entries/history/{lastModified}")]
     [ProducesResponseType(typeof(object), 200)]
     [ProducesResponseType(500)]
@@ -489,7 +471,7 @@ public class EntriesController : BaseV3Controller<Entry>
         {
             limit = Math.Min(Math.Max(limit, 1), 1000);
 
-            var entries = await _postgreSqlService.GetEntriesModifiedSinceAsync(
+            var entries = await _entries.GetEntriesModifiedSinceAsync(
                 lastModified,
                 limit,
                 cancellationToken
@@ -626,7 +608,7 @@ public class EntriesController : BaseV3Controller<Entry>
         try
         {
             // Use the count endpoint to get total
-            return await _postgreSqlService.CountEntriesAsync(type, findQuery, cancellationToken);
+            return await _entries.CountEntriesAsync(findQuery, type, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -648,7 +630,37 @@ public class EntriesController : BaseV3Controller<Entry>
 
     private string GetUserId()
     {
-        return HttpContext.GetSubjectIdString() ?? "00000000-0000-0000-0000-000000000001";
+        var authContext = HttpContext.GetAuthContext();
+        return authContext?.SubjectId?.ToString()
+            ?? HttpContext.GetSubjectIdString()
+            ?? "00000000-0000-0000-0000-000000000001";
+    }
+
+    private async Task EvaluateAlertsAsync(Entry[] entries, CancellationToken ct)
+    {
+        try
+        {
+            var latest = entries
+                .Where(e => e.Sgv.HasValue && e.Sgv.Value > 0)
+                .OrderByDescending(e => e.Mills)
+                .FirstOrDefault();
+
+            if (latest is null) return;
+
+            var context = new SensorContext
+            {
+                LatestValue = (decimal?)latest.Sgv,
+                LatestTimestamp = latest.Date ?? DateTimeOffset.FromUnixTimeMilliseconds(latest.Mills).UtcDateTime,
+                TrendRate = (decimal?)latest.TrendRate,
+                LastReadingAt = latest.Date ?? DateTimeOffset.FromUnixTimeMilliseconds(latest.Mills).UtcDateTime,
+            };
+
+            await _alertOrchestrator.EvaluateAsync(context, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Alert evaluation failed after V3 entry creation");
+        }
     }
 
     #endregion

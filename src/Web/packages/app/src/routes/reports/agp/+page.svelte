@@ -22,7 +22,9 @@
   } from "lucide-svelte";
   import { AmbulatoryGlucoseProfile } from "$lib/components/ambulatory-glucose-profile";
   import TIRStackedChart from "$lib/components/reports/TIRStackedChart.svelte";
-  import { getReportsData } from "$lib/data/reports.remote";
+  import ReliabilityBadge from "$lib/components/reports/ReliabilityBadge.svelte";
+  import { getReportsData } from "$api/reports.remote";
+  import { bg, bgLabel } from "$lib/utils/formatting";
   import { requireDateParamsContext } from "$lib/hooks/date-params.svelte";
   import { contextResource } from "$lib/hooks/resource-context.svelte";
 
@@ -181,9 +183,9 @@
         <div class="text-[10px] text-green-600">Target: ≥70%</div>
       </Card>
       <Card class="p-4 text-center">
-        <div class="text-3xl font-bold">{stats.mean?.toFixed(0) ?? "–"}</div>
+        <div class="text-3xl font-bold">{stats.mean ? bg(stats.mean) : "–"}</div>
         <div class="text-xs text-muted-foreground">Average</div>
-        <div class="text-[10px] text-muted-foreground/70">mg/dL</div>
+        <div class="text-[10px] text-muted-foreground/70">{bgLabel()}</div>
       </Card>
       <Card class="p-4 text-center">
         <div class="text-3xl font-bold text-red-600">
@@ -201,19 +203,21 @@
       </Card>
       <Card class="p-4 text-center">
         <div class="text-3xl font-bold text-red-500">
-          {((tir.low ?? 0) + (tir.severeLow ?? 0)).toFixed(1)}%
+          {((tir.low ?? 0) + (tir.veryLow ?? 0)).toFixed(1)}%
         </div>
         <div class="text-xs text-muted-foreground">Below Range</div>
         <div class="text-[10px] text-red-500">Target: &lt;4%</div>
       </Card>
       <Card class="p-4 text-center">
         <div class="text-3xl font-bold text-orange-500">
-          {((tir.high ?? 0) + (tir.severeHigh ?? 0)).toFixed(1)}%
+          {((tir.high ?? 0) + (tir.veryHigh ?? 0)).toFixed(1)}%
         </div>
         <div class="text-xs text-muted-foreground">Above Range</div>
         <div class="text-[10px] text-orange-500">Target: &lt;25%</div>
       </Card>
     </div>
+
+    <ReliabilityBadge reliability={analysis?.reliability} />
 
     <!-- Main AGP Chart -->
     <Card class="border-2">
@@ -329,7 +333,7 @@
           </div>
 
           <!-- Low Risk -->
-          {@const totalLows = (tir.low ?? 0) + (tir.severeLow ?? 0)}
+          {@const totalLows = (tir.low ?? 0) + (tir.veryLow ?? 0)}
           <div class="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
             {#if totalLows < 1}
               <CheckCircle2 class="w-5 h-5 text-green-600 shrink-0 mt-0.5" />

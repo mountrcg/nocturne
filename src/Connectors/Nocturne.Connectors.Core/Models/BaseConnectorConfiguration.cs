@@ -28,12 +28,7 @@ public abstract class BaseConnectorConfiguration : IConnectorConfiguration
     ///     Can be set via environment variable: CONNECT_{CONNECTORNAME}_TIMEZONE_OFFSET
     ///     or appsettings: {Configuration}:TimezoneOffset
     /// </summary>
-    [ConnectorProperty("TimezoneOffset",
-        RuntimeConfigurable = true,
-        DisplayName = "Timezone Offset",
-        Category = "General",
-        MinValue = -12,
-        MaxValue = 14)]
+    [ConnectorProperty(ConnectorPropertyKey.TimezoneOffset, MinValue = -12, MaxValue = 14)]
     public double TimezoneOffset { get; set; } = 0;
 
     [Required] public ConnectSource ConnectSource { get; set; }
@@ -42,35 +37,73 @@ public abstract class BaseConnectorConfiguration : IConnectorConfiguration
     ///     Whether the connector is enabled and should sync data.
     ///     When disabled, the connector enters standby mode.
     /// </summary>
-    [ConnectorProperty("Enabled",
-        RuntimeConfigurable = true,
-        DisplayName = "Enabled",
-        Category = "General")]
+    [ConnectorProperty(ConnectorPropertyKey.Enabled)]
     public bool Enabled { get; set; } = true;
 
-    [ConnectorProperty("MaxRetryAttempts",
-        RuntimeConfigurable = true,
-        DisplayName = "Max Retry Attempts",
-        Category = "Advanced",
-        MinValue = 0,
-        MaxValue = 10)]
+    [ConnectorProperty(ConnectorPropertyKey.MaxRetryAttempts, MinValue = 0, MaxValue = 10)]
     public int MaxRetryAttempts { get; set; } = 3;
 
-    [ConnectorProperty("BatchSize",
-        RuntimeConfigurable = true,
-        DisplayName = "Batch Size",
-        Category = "Advanced",
-        MinValue = 1,
-        MaxValue = 500)]
+    [ConnectorProperty(ConnectorPropertyKey.BatchSize, MinValue = 1, MaxValue = 500)]
     public int BatchSize { get; set; } = 50;
 
-    [ConnectorProperty("SyncIntervalMinutes",
-        RuntimeConfigurable = true,
-        DisplayName = "Sync Interval (Minutes)",
-        Category = "Sync",
-        MinValue = 1,
-        MaxValue = 60)]
+    [ConnectorProperty(ConnectorPropertyKey.SyncIntervalMinutes, MinValue = 1, MaxValue = 60)]
     public int SyncIntervalMinutes { get; set; } = 5;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncGlucose, DefaultValue = "true")]
+    public bool SyncGlucose { get; set; } = true;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncManualBG, DefaultValue = "true")]
+    public bool SyncManualBG { get; set; } = true;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncBoluses, DefaultValue = "true")]
+    public bool SyncBoluses { get; set; } = true;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncCarbIntake, DefaultValue = "true")]
+    public bool SyncCarbIntake { get; set; } = true;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncBolusCalculations, DefaultValue = "true")]
+    public bool SyncBolusCalculations { get; set; } = true;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncNotes, DefaultValue = "true")]
+    public bool SyncNotes { get; set; } = true;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncDeviceEvents, DefaultValue = "true")]
+    public bool SyncDeviceEvents { get; set; } = true;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncStateSpans, DefaultValue = "true")]
+    public bool SyncStateSpans { get; set; } = true;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncProfiles, DefaultValue = "true")]
+    public bool SyncProfiles { get; set; } = true;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncDeviceStatus, DefaultValue = "true")]
+    public bool SyncDeviceStatus { get; set; } = true;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncActivity, DefaultValue = "true")]
+    public bool SyncActivity { get; set; } = true;
+
+    [ConnectorProperty(ConnectorPropertyKey.SyncFood, DefaultValue = "true")]
+    public bool SyncFood { get; set; } = true;
+
+    public bool IsDataTypeEnabled(SyncDataType type) => type switch
+    {
+        SyncDataType.Glucose => SyncGlucose,
+        SyncDataType.ManualBG => SyncManualBG,
+        SyncDataType.Boluses => SyncBoluses,
+        SyncDataType.CarbIntake => SyncCarbIntake,
+        SyncDataType.BolusCalculations => SyncBolusCalculations,
+        SyncDataType.Notes => SyncNotes,
+        SyncDataType.DeviceEvents => SyncDeviceEvents,
+        SyncDataType.StateSpans => SyncStateSpans,
+        SyncDataType.Profiles => SyncProfiles,
+        SyncDataType.DeviceStatus => SyncDeviceStatus,
+        SyncDataType.Activity => SyncActivity,
+        SyncDataType.Food => SyncFood,
+        _ => true
+    };
+
+    public List<SyncDataType> GetEnabledDataTypes(List<SyncDataType> supportedTypes)
+        => supportedTypes.Where(IsDataTypeEnabled).ToList();
 
     public virtual void Validate()
     {
@@ -116,7 +149,7 @@ public abstract class BaseConnectorConfiguration : IConnectorConfiguration
             if (connectorProp is { Required: true })
             {
                 isRequired = true;
-                displayName = connectorProp.GetDisplayName();
+                displayName = connectorProp.GetKeyName();
             }
 
             if (!isRequired)

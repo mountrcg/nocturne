@@ -1,9 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
+using OpenApi.Remote.Attributes;
 using Nocturne.API.Models;
 using Nocturne.API.Services;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models.Services;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
 
 namespace Nocturne.API.Controllers.V4;
 
@@ -15,10 +16,12 @@ namespace Nocturne.API.Controllers.V4;
 [ApiController]
 [Route("api/v4/services")]
 [Produces("application/json")]
+[Tags("V4 Services")]
 public class ServicesController : ControllerBase
 {
     private readonly IDataSourceService _dataSourceService;
-    private readonly IPostgreSqlService _postgreSqlService;
+    private readonly IEntryRepository _entryRepository;
+    private readonly ITreatmentRepository _treatmentRepository;
     private readonly IConnectorHealthService _connectorHealthService;
     private readonly IConnectorSyncService _connectorSyncService;
     private readonly ILogger<ServicesController> _logger;
@@ -26,7 +29,8 @@ public class ServicesController : ControllerBase
 
     public ServicesController(
         IDataSourceService dataSourceService,
-        IPostgreSqlService postgreSqlService,
+        IEntryRepository entryRepository,
+        ITreatmentRepository treatmentRepository,
         IConnectorHealthService connectorHealthService,
         IConnectorSyncService connectorSyncService,
         ILogger<ServicesController> logger,
@@ -34,7 +38,8 @@ public class ServicesController : ControllerBase
     )
     {
         _dataSourceService = dataSourceService;
-        _postgreSqlService = postgreSqlService;
+        _entryRepository = entryRepository;
+        _treatmentRepository = treatmentRepository;
         _connectorHealthService = connectorHealthService;
         _connectorSyncService = connectorSyncService;
         _logger = logger;
@@ -47,6 +52,7 @@ public class ServicesController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Complete services overview including active data sources, connectors, and uploader apps</returns>
     [HttpGet]
+    [RemoteQuery]
     [ProducesResponseType(typeof(ServicesOverview), 200)]
     [ProducesResponseType(500)]
     public async Task<ActionResult<ServicesOverview>> GetServicesOverview(
@@ -71,7 +77,7 @@ public class ServicesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting services overview");
-            return StatusCode(500, new { error = "Failed to get services overview" });
+            return Problem(detail: "Failed to get services overview", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -82,6 +88,7 @@ public class ServicesController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>List of active data sources with their status</returns>
     [HttpGet("data-sources")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(List<DataSourceInfo>), 200)]
     [ProducesResponseType(500)]
     public async Task<ActionResult<List<DataSourceInfo>>> GetActiveDataSources(
@@ -98,7 +105,7 @@ public class ServicesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting active data sources");
-            return StatusCode(500, new { error = "Failed to get active data sources" });
+            return Problem(detail: "Failed to get active data sources", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -109,6 +116,7 @@ public class ServicesController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Data source information if found</returns>
     [HttpGet("data-sources/{id}")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(DataSourceInfo), 200)]
     [ProducesResponseType(404)]
     [ProducesResponseType(500)]
@@ -124,14 +132,14 @@ public class ServicesController : ControllerBase
             var dataSource = await _dataSourceService.GetDataSourceInfoAsync(id, cancellationToken);
             if (dataSource == null)
             {
-                return NotFound(new { error = $"Data source not found: {id}" });
+                return Problem(detail: $"Data source not found: {id}", statusCode: 404, title: "Not Found");
             }
             return Ok(dataSource);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting data source: {Id}", id);
-            return StatusCode(500, new { error = "Failed to get data source" });
+            return Problem(detail: "Failed to get data source", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -140,6 +148,7 @@ public class ServicesController : ControllerBase
     /// </summary>
     /// <returns>List of available connectors</returns>
     [HttpGet("connectors")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(List<AvailableConnector>), 200)]
     public ActionResult<List<AvailableConnector>> GetAvailableConnectors()
     {
@@ -154,6 +163,7 @@ public class ServicesController : ControllerBase
     /// <param name="id">The connector ID (e.g., "dexcom", "libre")</param>
     /// <returns>Connector capabilities</returns>
     [HttpGet("connectors/{id}/capabilities")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(ConnectorCapabilities), 200)]
     [ProducesResponseType(404)]
     public ActionResult<ConnectorCapabilities> GetConnectorCapabilities(string id)
@@ -163,7 +173,7 @@ public class ServicesController : ControllerBase
         var capabilities = _dataSourceService.GetConnectorCapabilities(id);
         if (capabilities == null)
         {
-            return NotFound(new { error = $"Connector not found: {id}" });
+            return Problem(detail: $"Connector not found: {id}", statusCode: 404, title: "Not Found");
         }
 
         return Ok(capabilities);
@@ -174,6 +184,7 @@ public class ServicesController : ControllerBase
     /// </summary>
     /// <returns>List of uploader apps with setup instructions</returns>
     [HttpGet("uploaders")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(List<UploaderApp>), 200)]
     public ActionResult<List<UploaderApp>> GetUploaderApps()
     {
@@ -188,6 +199,7 @@ public class ServicesController : ControllerBase
     /// </summary>
     /// <returns>API endpoint information</returns>
     [HttpGet("api-info")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(ApiEndpointInfo), 200)]
     public ActionResult<ApiEndpointInfo> GetApiInfo()
     {
@@ -215,6 +227,7 @@ public class ServicesController : ControllerBase
     /// <param name="appId">The uploader app ID (e.g., "xdrip", "loop", "aaps")</param>
     /// <returns>Setup instructions for the specified app</returns>
     [HttpGet("uploaders/{appId}/setup")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(UploaderSetupResponse), 200)]
     [ProducesResponseType(404)]
     public ActionResult<UploaderSetupResponse> GetUploaderSetup(string appId)
@@ -228,7 +241,7 @@ public class ServicesController : ControllerBase
 
         if (app == null)
         {
-            return NotFound(new { error = $"Uploader app not found: {appId}" });
+            return Problem(detail: $"Uploader app not found: {appId}", statusCode: 404, title: "Not Found");
         }
 
         var baseUrl = GetBaseUrl();
@@ -255,6 +268,7 @@ public class ServicesController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result of the delete operation</returns>
     [HttpDelete("data-sources/demo")]
+    [RemoteCommand(Invalidates = ["GetServicesOverview", "GetActiveDataSources", "GetStatus"])]
     [ProducesResponseType(typeof(DataSourceDeleteResult), 200)]
     [ProducesResponseType(500)]
     public async Task<ActionResult<DataSourceDeleteResult>> DeleteDemoData(
@@ -275,7 +289,7 @@ public class ServicesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deleting demo data");
-            return StatusCode(500, new { error = "Failed to delete demo data" });
+            return Problem(detail: "Failed to delete demo data", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -287,6 +301,7 @@ public class ServicesController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result of the delete operation</returns>
     [HttpDelete("data-sources/{id}")]
+    [RemoteCommand(Invalidates = ["GetServicesOverview", "GetActiveDataSources", "GetStatus"])]
     [ProducesResponseType(typeof(DataSourceDeleteResult), 200)]
     [ProducesResponseType(404)]
     [ProducesResponseType(500)]
@@ -313,7 +328,7 @@ public class ServicesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deleting data for data source: {Id}", id);
-            return StatusCode(500, new { error = "Failed to delete data source data" });
+            return Problem(detail: "Failed to delete data source data", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -325,6 +340,7 @@ public class ServicesController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Data summary with counts by type</returns>
     [HttpGet("connectors/{id}/data-summary")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(ConnectorDataSummary), 200)]
     [ProducesResponseType(500)]
     public async Task<ActionResult<ConnectorDataSummary>> GetConnectorDataSummary(
@@ -345,7 +361,7 @@ public class ServicesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting data summary for connector: {Id}", id);
-            return StatusCode(500, new { error = "Failed to get connector data summary" });
+            return Problem(detail: "Failed to get connector data summary", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -357,6 +373,7 @@ public class ServicesController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result of the delete operation</returns>
     [HttpDelete("connectors/{id}/data")]
+    [RemoteCommand(Invalidates = ["GetServicesOverview", "GetActiveDataSources", "GetStatus", "GetConnectorDataSummary"])]
     [ProducesResponseType(typeof(DataSourceDeleteResult), 200)]
     [ProducesResponseType(404)]
     [ProducesResponseType(500)]
@@ -385,7 +402,7 @@ public class ServicesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deleting data for connector: {Id}", id);
-            return StatusCode(500, new { error = "Failed to delete connector data" });
+            return Problem(detail: "Failed to delete connector data", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -397,6 +414,7 @@ public class ServicesController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Sync result with success status and details</returns>
     [HttpPost("connectors/{id}/sync")]
+    [RemoteCommand]
     [ProducesResponseType(typeof(Nocturne.Connectors.Core.Models.SyncResult), 200)]
     [ProducesResponseType(400)]
     public async Task<
@@ -408,7 +426,7 @@ public class ServicesController : ControllerBase
     )
     {
         if (string.IsNullOrWhiteSpace(id))
-            return BadRequest(new { error = "Connector ID is required" });
+            return Problem(detail: "Connector ID is required", statusCode: 400, title: "Bad Request");
 
         var result = await _connectorSyncService.TriggerSyncAsync(id, request, cancellationToken);
         return Ok(result);
@@ -422,6 +440,7 @@ public class ServicesController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Complete sync status including timestamps for entries, treatments, and connector state</returns>
     [HttpGet("connectors/{id}/sync-status")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(ConnectorSyncStatus), 200)]
     [ProducesResponseType(400)]
     [ProducesResponseType(500)]
@@ -434,7 +453,7 @@ public class ServicesController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(id))
         {
-            return BadRequest(new { error = "Connector ID is required" });
+            return Problem(detail: "Connector ID is required", statusCode: 400, title: "Bad Request");
         }
 
         try
@@ -443,25 +462,25 @@ public class ServicesController : ControllerBase
             var dataSource = MapConnectorIdToDataSource(id);
 
             // Get latest timestamps from database
-            var entryTimestamp = await _postgreSqlService.GetLatestEntryTimestampBySourceAsync(
+            var entryTimestamp = await _entryRepository.GetLatestEntryTimestampBySourceAsync(
                 dataSource,
                 cancellationToken
             );
 
             var oldestEntryTimestamp =
-                await _postgreSqlService.GetOldestEntryTimestampBySourceAsync(
+                await _entryRepository.GetOldestEntryTimestampBySourceAsync(
                     dataSource,
                     cancellationToken
                 );
 
             var treatmentTimestamp =
-                await _postgreSqlService.GetLatestTreatmentTimestampBySourceAsync(
+                await _treatmentRepository.GetLatestTreatmentTimestampBySourceAsync(
                     dataSource,
                     cancellationToken
                 );
 
             var oldestTreatmentTimestamp =
-                await _postgreSqlService.GetOldestTreatmentTimestampBySourceAsync(
+                await _treatmentRepository.GetOldestTreatmentTimestampBySourceAsync(
                     dataSource,
                     cancellationToken
                 );
@@ -495,7 +514,7 @@ public class ServicesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting sync status for connector: {Id}", id);
-            return StatusCode(500, new { error = "Failed to get sync status" });
+            return Problem(detail: "Failed to get sync status", statusCode: 500, title: "Internal Server Error");
         }
     }
 

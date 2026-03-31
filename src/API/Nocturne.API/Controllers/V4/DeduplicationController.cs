@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using OpenApi.Remote.Attributes;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models;
 
@@ -11,6 +12,7 @@ namespace Nocturne.API.Controllers.V4;
 [ApiController]
 [Route("api/v4/admin/deduplication")]
 [Produces("application/json")]
+[Tags("V4 Deduplication")]
 public class DeduplicationController : ControllerBase
 {
     private readonly IDeduplicationService _deduplicationService;
@@ -31,6 +33,7 @@ public class DeduplicationController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Job ID for tracking progress</returns>
     [HttpPost("run")]
+    [RemoteCommand]
     [ProducesResponseType(typeof(DeduplicationJobResponse), 202)]
     [ProducesResponseType(500)]
     public async Task<ActionResult<DeduplicationJobResponse>> StartDeduplicationJob(
@@ -52,7 +55,7 @@ public class DeduplicationController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to start deduplication job");
-            return StatusCode(500, new { error = "Failed to start deduplication job" });
+            return Problem(detail: "Failed to start deduplication job", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -63,6 +66,7 @@ public class DeduplicationController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Current status and progress of the job</returns>
     [HttpGet("status/{jobId:guid}")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(DeduplicationJobStatus), 200)]
     [ProducesResponseType(404)]
     [ProducesResponseType(500)]
@@ -78,7 +82,7 @@ public class DeduplicationController : ControllerBase
 
             if (status == null)
             {
-                return NotFound(new { error = "Job not found" });
+                return Problem(detail: "Job not found", statusCode: 404, title: "Not Found");
             }
 
             return Ok(status);
@@ -86,7 +90,7 @@ public class DeduplicationController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get status for job {JobId}", jobId);
-            return StatusCode(500, new { error = "Failed to get job status" });
+            return Problem(detail: "Failed to get job status", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -97,6 +101,7 @@ public class DeduplicationController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Whether the job was successfully cancelled</returns>
     [HttpPost("cancel/{jobId:guid}")]
+    [RemoteCommand]
     [ProducesResponseType(typeof(CancelJobResponse), 200)]
     [ProducesResponseType(404)]
     [ProducesResponseType(500)]
@@ -112,7 +117,7 @@ public class DeduplicationController : ControllerBase
 
             if (!cancelled)
             {
-                return NotFound(new { error = "Job not found or already completed" });
+                return Problem(detail: "Job not found or already completed", statusCode: 404, title: "Not Found");
             }
 
             return Ok(new CancelJobResponse
@@ -125,7 +130,7 @@ public class DeduplicationController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to cancel job {JobId}", jobId);
-            return StatusCode(500, new { error = "Failed to cancel job" });
+            return Problem(detail: "Failed to cancel job", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -136,6 +141,7 @@ public class DeduplicationController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>All linked records in the same canonical group</returns>
     [HttpGet("entries/{entryId}/sources")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(LinkedRecordsResponse), 200)]
     [ProducesResponseType(404)]
     [ProducesResponseType(500)]
@@ -147,7 +153,7 @@ public class DeduplicationController : ControllerBase
         {
             if (!Guid.TryParse(entryId, out var entryGuid))
             {
-                return BadRequest(new { error = "Invalid entry ID format" });
+                return Problem(detail: "Invalid entry ID format", statusCode: 400, title: "Bad Request");
             }
 
             var linkedRecord = await _deduplicationService.GetLinkedRecordAsync(
@@ -155,7 +161,7 @@ public class DeduplicationController : ControllerBase
 
             if (linkedRecord == null)
             {
-                return NotFound(new { error = "Entry not found or not linked" });
+                return Problem(detail: "Entry not found or not linked", statusCode: 404, title: "Not Found");
             }
 
             var allLinked = await _deduplicationService.GetLinkedRecordsAsync(
@@ -171,7 +177,7 @@ public class DeduplicationController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get linked records for entry {EntryId}", entryId);
-            return StatusCode(500, new { error = "Failed to get linked records" });
+            return Problem(detail: "Failed to get linked records", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -182,6 +188,7 @@ public class DeduplicationController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>All linked records in the same canonical group</returns>
     [HttpGet("treatments/{treatmentId}/sources")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(LinkedRecordsResponse), 200)]
     [ProducesResponseType(404)]
     [ProducesResponseType(500)]
@@ -193,7 +200,7 @@ public class DeduplicationController : ControllerBase
         {
             if (!Guid.TryParse(treatmentId, out var treatmentGuid))
             {
-                return BadRequest(new { error = "Invalid treatment ID format" });
+                return Problem(detail: "Invalid treatment ID format", statusCode: 400, title: "Bad Request");
             }
 
             var linkedRecord = await _deduplicationService.GetLinkedRecordAsync(
@@ -201,7 +208,7 @@ public class DeduplicationController : ControllerBase
 
             if (linkedRecord == null)
             {
-                return NotFound(new { error = "Treatment not found or not linked" });
+                return Problem(detail: "Treatment not found or not linked", statusCode: 404, title: "Not Found");
             }
 
             var allLinked = await _deduplicationService.GetLinkedRecordsAsync(
@@ -217,7 +224,7 @@ public class DeduplicationController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get linked records for treatment {TreatmentId}", treatmentId);
-            return StatusCode(500, new { error = "Failed to get linked records" });
+            return Problem(detail: "Failed to get linked records", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -228,6 +235,7 @@ public class DeduplicationController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>All linked records in the same canonical group</returns>
     [HttpGet("state-spans/{stateSpanId}/sources")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(LinkedRecordsResponse), 200)]
     [ProducesResponseType(404)]
     [ProducesResponseType(500)]
@@ -239,7 +247,7 @@ public class DeduplicationController : ControllerBase
         {
             if (!Guid.TryParse(stateSpanId, out var stateSpanGuid))
             {
-                return BadRequest(new { error = "Invalid state span ID format" });
+                return Problem(detail: "Invalid state span ID format", statusCode: 400, title: "Bad Request");
             }
 
             var linkedRecord = await _deduplicationService.GetLinkedRecordAsync(
@@ -247,7 +255,7 @@ public class DeduplicationController : ControllerBase
 
             if (linkedRecord == null)
             {
-                return NotFound(new { error = "State span not found or not linked" });
+                return Problem(detail: "State span not found or not linked", statusCode: 404, title: "Not Found");
             }
 
             var allLinked = await _deduplicationService.GetLinkedRecordsAsync(
@@ -263,7 +271,56 @@ public class DeduplicationController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get linked records for state span {StateSpanId}", stateSpanId);
-            return StatusCode(500, new { error = "Failed to get linked records" });
+            return Problem(detail: "Failed to get linked records", statusCode: 500, title: "Internal Server Error");
+        }
+    }
+
+    /// <summary>
+    /// Get linked records for any V4 record type by its canonical group.
+    /// </summary>
+    /// <param name="recordType">The record type (e.g. SensorGlucose, Bolus, CarbIntake)</param>
+    /// <param name="recordId">The record ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>All linked records in the same canonical group</returns>
+    [HttpGet("records/{recordType}/{recordId}/sources")]
+    [RemoteQuery]
+    [ProducesResponseType(typeof(LinkedRecordsResponse), 200)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(500)]
+    public async Task<ActionResult<LinkedRecordsResponse>> GetRecordLinkedRecords(
+        RecordType recordType,
+        string recordId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            if (!Guid.TryParse(recordId, out var recordGuid))
+            {
+                return Problem(detail: "Invalid record ID format", statusCode: 400, title: "Bad Request");
+            }
+
+            var linkedRecord = await _deduplicationService.GetLinkedRecordAsync(
+                recordType, recordGuid, cancellationToken);
+
+            if (linkedRecord == null)
+            {
+                return Problem(detail: "Record not found or not linked", statusCode: 404, title: "Not Found");
+            }
+
+            var allLinked = await _deduplicationService.GetLinkedRecordsAsync(
+                linkedRecord.CanonicalId, cancellationToken);
+
+            return Ok(new LinkedRecordsResponse
+            {
+                CanonicalId = linkedRecord.CanonicalId,
+                RecordType = recordType,
+                LinkedRecords = allLinked.ToList()
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get linked records for {RecordType} {RecordId}", recordType, recordId);
+            return Problem(detail: "Failed to get linked records", statusCode: 500, title: "Internal Server Error");
         }
     }
 }

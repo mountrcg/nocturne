@@ -1,0 +1,324 @@
+using System.Text.Json;
+using Nocturne.Core.Contracts.Alerts;
+using Nocturne.Core.Contracts.Multitenancy;
+using Nocturne.Core.Models;
+
+namespace Nocturne.API.Services.Alerts;
+
+/// <summary>
+/// Background service that runs every 30 seconds to:
+/// 1. Advance escalations whose delay has elapsed.
+/// 2. Close excursions whose hysteresis window has expired.
+/// 3. Evaluate signal loss rules for tenants with stale readings.
+/// 4. Check snoozed instances for smart snooze extension or re-fire.
+/// </summary>
+public class AlertSweepService : BackgroundService
+{
+    private readonly IServiceProvider _serviceProvider;
+    private readonly ILogger<AlertSweepService> _logger;
+
+    public AlertSweepService(
+        IServiceProvider serviceProvider,
+        ILogger<AlertSweepService> logger)
+    {
+        _serviceProvider = serviceProvider;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        _logger.LogInformation("Alert Sweep Service started");
+
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        while (await timer.WaitForNextTickAsync(ct))
+        {
+            try
+            {
+                await AdvanceEscalationsAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error advancing escalations");
+            }
+
+            try
+            {
+                await CloseHysteresisWindowsAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error closing hysteresis windows");
+            }
+
+            try
+            {
+                await EvaluateSignalLossAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error evaluating signal loss");
+            }
+
+            try
+            {
+                await CheckSnoozedInstancesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking snoozed instances");
+            }
+        }
+
+        _logger.LogInformation("Alert Sweep Service stopped");
+    }
+
+    /// <summary>
+    /// Query instances with status "escalating" whose NextEscalationAt has passed.
+    /// Advance each to the next step.
+    /// </summary>
+    private async Task AdvanceEscalationsAsync(CancellationToken ct)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IAlertRepository>();
+        var advancer = scope.ServiceProvider.GetRequiredService<IEscalationAdvancer>();
+
+        var now = DateTime.UtcNow;
+
+        var instances = await repository.GetEscalatingInstancesDueAsync(now, ct);
+
+        if (instances.Count == 0) return;
+
+        _logger.LogDebug("Advancing {Count} escalations", instances.Count);
+
+        foreach (var instance in instances)
+        {
+            try
+            {
+                await advancer.AdvanceAsync(instance, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error advancing escalation for instance {InstanceId}", instance.Id);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Close excursions that are in hysteresis and whose window has expired.
+    /// </summary>
+    private async Task CloseHysteresisWindowsAsync(CancellationToken ct)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IAlertRepository>();
+
+        var now = DateTime.UtcNow;
+
+        var excursions = await repository.GetExcursionsInHysteresisAsync(ct);
+
+        if (excursions.Count == 0) return;
+
+        var closedCount = 0;
+
+        foreach (var excursion in excursions)
+        {
+            var expiry = excursion.HysteresisStartedAt!.Value.AddMinutes(excursion.HysteresisMinutes);
+            if (now < expiry) continue;
+
+            await repository.CloseHysteresisExcursionAsync(excursion.Id, excursion.AlertRuleId, now, ct);
+            closedCount++;
+        }
+
+        if (closedCount > 0)
+        {
+            _logger.LogInformation("Closed {Count} hysteresis-expired excursions", closedCount);
+        }
+    }
+
+    /// <summary>
+    /// Evaluate signal loss rules: for tenants whose last reading is older than the timeout,
+    /// feed conditionMet=true into the excursion tracker.
+    /// </summary>
+    private async Task EvaluateSignalLossAsync(CancellationToken ct)
+    {
+        using var lookupScope = _serviceProvider.CreateScope();
+        var repository = lookupScope.ServiceProvider.GetRequiredService<IAlertRepository>();
+
+        var now = DateTime.UtcNow;
+
+        var signalLossRules = await repository.GetEnabledSignalLossRulesAsync(ct);
+
+        if (signalLossRules.Count == 0) return;
+
+        // Group rules by tenant
+        var rulesByTenant = signalLossRules.GroupBy(r => r.TenantId);
+
+        foreach (var tenantGroup in rulesByTenant)
+        {
+            var tenantId = tenantGroup.Key;
+
+            // Get tenant context
+            var tenantContext = await repository.GetTenantAlertContextAsync(tenantId, ct);
+            if (tenantContext is null || !tenantContext.IsActive) continue;
+
+            foreach (var rule in tenantGroup)
+            {
+                try
+                {
+                    // Parse timeout from condition params
+                    var conditionParams = JsonSerializer.Deserialize<SignalLossCondition>(rule.ConditionParams);
+                    if (conditionParams is null) continue;
+
+                    var timeout = TimeSpan.FromMinutes(conditionParams.TimeoutMinutes);
+                    var lastReading = tenantContext.LastReadingAt ?? DateTime.MinValue;
+
+                    if (now - lastReading < timeout) continue;
+
+                    // Signal loss detected for this rule. Create a scoped service and evaluate.
+                    using var tenantScope = _serviceProvider.CreateScope();
+                    var tenantAccessor = tenantScope.ServiceProvider.GetRequiredService<ITenantAccessor>();
+                    tenantAccessor.SetTenant(new TenantContext(tenantContext.TenantId, tenantContext.Slug ?? string.Empty, tenantContext.DisplayName ?? string.Empty, true));
+
+                    var excursionTracker = tenantScope.ServiceProvider.GetRequiredService<IExcursionTracker>();
+                    await excursionTracker.ProcessEvaluationAsync(rule.Id, true, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error evaluating signal loss for rule {RuleId}", rule.Id);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Check snoozed instances whose snooze has expired.
+    /// If smart snooze is enabled and the glucose trend is favorable, extend the snooze.
+    /// Otherwise, clear the snooze so the alert re-fires and escalation resumes.
+    /// </summary>
+    private async Task CheckSnoozedInstancesAsync(CancellationToken ct)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IAlertRepository>();
+
+        var now = DateTime.UtcNow;
+
+        var instances = await repository.GetExpiredSnoozedInstancesAsync(now, ct);
+
+        if (instances.Count == 0) return;
+
+        _logger.LogDebug("Processing {Count} expired snoozed instances", instances.Count);
+
+        // Gather distinct tenant IDs so we can batch-load latest trend rates
+        var tenantIds = instances.Select(i => i.TenantId).Distinct().ToList();
+        var latestTrendByTenant = new Dictionary<Guid, double?>();
+
+        foreach (var tenantId in tenantIds)
+        {
+            latestTrendByTenant[tenantId] = await repository.GetLatestTrendRateAsync(tenantId, ct);
+        }
+
+        var modifiedCount = 0;
+
+        foreach (var instance in instances)
+        {
+            // Parse client configuration for snooze settings
+            var smartSnooze = false;
+            var smartSnoozeExtendMinutes = 15;
+            var maxCount = 3;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(instance.ClientConfiguration);
+                if (doc.RootElement.TryGetProperty("snooze", out var snoozeEl))
+                {
+                    if (snoozeEl.TryGetProperty("smartSnooze", out var smartEl))
+                        smartSnooze = smartEl.GetBoolean();
+                    if (snoozeEl.TryGetProperty("smartSnoozeExtendMinutes", out var extendEl))
+                        smartSnoozeExtendMinutes = extendEl.GetInt32();
+                    if (snoozeEl.TryGetProperty("maxCount", out var maxEl))
+                        maxCount = maxEl.GetInt32();
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse client configuration for rule {RuleId}", instance.AlertRuleId);
+            }
+
+            if (smartSnooze && instance.SnoozeCount < maxCount)
+            {
+                // Determine if glucose trend is favorable
+                var favorable = IsTrendFavorable(
+                    instance.ConditionType, instance.ConditionParams,
+                    latestTrendByTenant.GetValueOrDefault(instance.TenantId));
+
+                if (favorable)
+                {
+                    await repository.UpdateInstanceAsync(new UpdateAlertInstanceRequest(
+                        instance.InstanceId,
+                        SnoozedUntil: now.AddMinutes(smartSnoozeExtendMinutes),
+                        SnoozeCount: instance.SnoozeCount + 1), ct);
+
+                    _logger.LogDebug(
+                        "Smart snooze extended instance {InstanceId} by {Minutes}m (count: {Count})",
+                        instance.InstanceId, smartSnoozeExtendMinutes, instance.SnoozeCount + 1);
+                }
+                else
+                {
+                    await repository.UpdateInstanceAsync(new UpdateAlertInstanceRequest(
+                        instance.InstanceId,
+                        SnoozedUntil: DateTime.MinValue), ct);
+
+                    _logger.LogDebug(
+                        "Smart snooze cleared for instance {InstanceId} — trend not favorable",
+                        instance.InstanceId);
+                }
+            }
+            else
+            {
+                // Smart snooze disabled or max count reached — clear snooze
+                await repository.UpdateInstanceAsync(new UpdateAlertInstanceRequest(
+                    instance.InstanceId,
+                    SnoozedUntil: DateTime.MinValue), ct);
+
+                _logger.LogDebug(
+                    "Snooze expired for instance {InstanceId} (smartSnooze={Smart}, count={Count}/{Max})",
+                    instance.InstanceId, smartSnooze, instance.SnoozeCount, maxCount);
+            }
+
+            modifiedCount++;
+        }
+
+        if (modifiedCount > 0)
+        {
+            _logger.LogInformation("Processed {Count} expired snoozed instances", modifiedCount);
+        }
+    }
+
+    /// <summary>
+    /// Determines whether the current glucose trend is favorable for extending a snooze.
+    /// For "below" (low alerts): favorable if BG is rising (trend rate > 0).
+    /// For "above" (high alerts): favorable if BG is falling (trend rate &lt; 0).
+    /// For other condition types: not favorable (don't extend).
+    /// </summary>
+    private static bool IsTrendFavorable(string conditionType, string conditionParams, double? trendRate)
+    {
+        if (trendRate is null) return false;
+        if (conditionType != "threshold") return false;
+
+        try
+        {
+            var condition = JsonSerializer.Deserialize<ThresholdCondition>(conditionParams);
+            if (condition is null) return false;
+
+            return condition.Direction.ToLowerInvariant() switch
+            {
+                "below" => trendRate > 0,  // Low alert: favorable if BG rising
+                "above" => trendRate < 0,  // High alert: favorable if BG falling
+                _ => false
+            };
+        }
+        catch
+        {
+            return false;
+        }
+    }
+}

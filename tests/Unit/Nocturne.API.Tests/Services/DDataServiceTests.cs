@@ -3,7 +3,7 @@ using Moq;
 using Nocturne.API.Services;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
 using Xunit;
 
 namespace Nocturne.API.Tests.Services;
@@ -14,21 +14,39 @@ namespace Nocturne.API.Tests.Services;
 [Parity("ddata.test.js")]
 public class DDataServiceTests
 {
-    private readonly Mock<IPostgreSqlService> _mockPostgreSqlService;
+    private readonly Mock<IEntryRepository> _mockEntryRepository;
+    private readonly Mock<ITreatmentRepository> _mockTreatmentRepository;
+    private readonly Mock<IProfileRepository> _mockProfileRepository;
+    private readonly Mock<IDeviceStatusRepository> _mockDeviceStatusRepository;
+    private readonly Mock<IFoodRepository> _mockFoodRepository;
+    private readonly Mock<IActivityRepository> _mockActivityRepository;
     private readonly Mock<ILogger<DDataService>> _mockLogger;
     private readonly DDataService _ddataService;
 
     public DDataServiceTests()
     {
-        _mockPostgreSqlService = new Mock<IPostgreSqlService>();
+        _mockEntryRepository = new Mock<IEntryRepository>();
+        _mockTreatmentRepository = new Mock<ITreatmentRepository>();
+        _mockProfileRepository = new Mock<IProfileRepository>();
+        _mockDeviceStatusRepository = new Mock<IDeviceStatusRepository>();
+        _mockFoodRepository = new Mock<IFoodRepository>();
+        _mockActivityRepository = new Mock<IActivityRepository>();
         _mockLogger = new Mock<ILogger<DDataService>>();
-        _ddataService = new DDataService(_mockPostgreSqlService.Object, _mockLogger.Object);
+        _ddataService = new DDataService(
+            _mockEntryRepository.Object,
+            _mockTreatmentRepository.Object,
+            _mockProfileRepository.Object,
+            _mockDeviceStatusRepository.Object,
+            _mockFoodRepository.Object,
+            _mockActivityRepository.Object,
+            _mockLogger.Object
+        );
     }
 
     [Fact]
     public async Task GetCurrentDDataAsync_ShouldReturnDDataStructure()
     { // Arrange
-        _mockPostgreSqlService
+        _mockEntryRepository
             .Setup(x =>
                 x.GetEntriesAsync(
                     It.IsAny<string>(),
@@ -38,7 +56,7 @@ public class DDataServiceTests
                 )
             )
             .ReturnsAsync(Array.Empty<Entry>());
-        _mockPostgreSqlService
+        _mockTreatmentRepository
             .Setup(x =>
                 x.GetTreatmentsAsync(
                     It.IsAny<int>(),
@@ -47,7 +65,7 @@ public class DDataServiceTests
                 )
             )
             .ReturnsAsync(Array.Empty<Treatment>());
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x =>
                 x.GetDeviceStatusAsync(
                     It.IsAny<int>(),
@@ -56,15 +74,15 @@ public class DDataServiceTests
                 )
             )
             .ReturnsAsync(Array.Empty<DeviceStatus>());
-        _mockPostgreSqlService
+        _mockProfileRepository
             .Setup(x =>
                 x.GetProfilesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>())
             )
             .ReturnsAsync(Array.Empty<Profile>());
-        _mockPostgreSqlService
+        _mockFoodRepository
             .Setup(x => x.GetFoodAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<Food>());
-        _mockPostgreSqlService
+        _mockActivityRepository
             .Setup(x =>
                 x.GetActivitiesAsync(
                     It.IsAny<int>(),
@@ -195,6 +213,69 @@ public class DDataServiceTests
         // Assert
         Assert.NotEmpty(result);
         Assert.All(result, ds => Assert.True(ds.Mills <= 2500));
+    }
+
+    [Fact]
+    public void ProcessTreatments_ShouldPopulateLastProfileFromSwitch()
+    {
+        // Arrange - lastProfileFromSwitch must be computed from profile treatments
+        // cgm-remote-monitor finds the latest zero-duration Profile Switch before current time
+        var treatments = new List<Treatment>
+        {
+            new()
+            {
+                EventType = "Profile Switch",
+                Mills = 1000,
+                Duration = 0,
+                Profile = "OldProfile",
+            },
+            new()
+            {
+                EventType = "Profile Switch",
+                Mills = 3000,
+                Duration = 0,
+                Profile = "CurrentProfile",
+            },
+            new()
+            {
+                EventType = "Profile Switch",
+                Mills = 2000,
+                Duration = 60,
+                Profile = "TimedProfile",
+            },
+            new()
+            {
+                EventType = "Meal Bolus",
+                Mills = 2500,
+                Duration = 0,
+            },
+        };
+
+        // Act
+        var result = _ddataService.ProcessTreatments(treatments, false);
+
+        // Assert - should pick the latest zero-duration Profile Switch
+        Assert.Equal("CurrentProfile", result.LastProfileFromSwitch);
+    }
+
+    [Fact]
+    public void ProcessTreatments_ShouldReturnNullLastProfileFromSwitch_WhenNoProfileSwitches()
+    {
+        // Arrange
+        var treatments = new List<Treatment>
+        {
+            new()
+            {
+                EventType = "Meal Bolus",
+                Mills = 1000,
+            },
+        };
+
+        // Act
+        var result = _ddataService.ProcessTreatments(treatments, false);
+
+        // Assert
+        Assert.Null(result.LastProfileFromSwitch);
     }
 
     [Fact]

@@ -1,7 +1,9 @@
 using Microsoft.Extensions.Options;
 using Nocturne.Core.Constants;
 using Nocturne.Core.Models;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Models.V4;
+using Nocturne.Core.Contracts.Repositories;
+using Nocturne.Core.Contracts.V4.Repositories;
 using Nocturne.Services.Demo.Configuration;
 
 namespace Nocturne.Services.Demo.Services;
@@ -136,16 +138,17 @@ public class DemoDataHostedService : BackgroundService
         _logger.LogInformation("Regenerating demo data - clearing existing data first");
 
         using var scope = _serviceProvider.CreateScope();
-        var postgreSqlService = scope.ServiceProvider.GetRequiredService<IPostgreSqlService>();
+        var entryRepository = scope.ServiceProvider.GetRequiredService<IEntryRepository>();
+        var treatmentRepository = scope.ServiceProvider.GetRequiredService<ITreatmentRepository>();
         var entryService = scope.ServiceProvider.GetRequiredService<IDemoEntryService>();
         var treatmentService = scope.ServiceProvider.GetRequiredService<IDemoTreatmentService>();
 
         // Clear existing demo data
-        var entriesDeleted = await postgreSqlService.DeleteEntriesByDataSourceAsync(
+        var entriesDeleted = await entryRepository.DeleteEntriesByDataSourceAsync(
             DataSources.DemoService,
             cancellationToken
         );
-        var treatmentsDeleted = await postgreSqlService.DeleteTreatmentsByDataSourceAsync(
+        var treatmentsDeleted = await treatmentRepository.DeleteTreatmentsByDataSourceAsync(
             DataSources.DemoService,
             cancellationToken
         );
@@ -155,6 +158,9 @@ public class DemoDataHostedService : BackgroundService
             entriesDeleted,
             treatmentsDeleted
         );
+
+        // Create synthetic PatientInsulin record for demo mode
+        await EnsureDemoPatientInsulinAsync(scope.ServiceProvider, cancellationToken);
 
         // Generate and save data using streaming pattern to minimize memory usage
         var startTime = DateTime.UtcNow;
@@ -228,6 +234,53 @@ public class DemoDataHostedService : BackgroundService
             entryCount,
             treatmentCount,
             duration
+        );
+    }
+
+    /// <summary>
+    /// Ensures a synthetic PatientInsulin record exists for demo mode so the UI
+    /// shows the insulin management experience correctly.
+    /// </summary>
+    private async Task EnsureDemoPatientInsulinAsync(
+        IServiceProvider scopedProvider,
+        CancellationToken cancellationToken
+    )
+    {
+        var insulinRepository = scopedProvider.GetRequiredService<IPatientInsulinRepository>();
+
+        // Check if a current insulin already exists (idempotent)
+        var existing = await insulinRepository.GetCurrentAsync(cancellationToken);
+        if (existing.Any())
+        {
+            _logger.LogDebug("Demo PatientInsulin record already exists, skipping creation");
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var demoInsulin = new PatientInsulin
+        {
+            Id = Guid.CreateVersion7(),
+            FormulationId = "humalog",
+            Name = "Humalog (Demo)",
+            InsulinCategory = InsulinCategory.RapidActing,
+            Dia = _config.InsulinDurationMinutes / 60.0,
+            Peak = (int)_config.InsulinPeakMinutes,
+            Curve = "rapid-acting",
+            Concentration = 100,
+            Role = InsulinRole.Both,
+            IsPrimary = true,
+            IsCurrent = true,
+            StartDate = DateOnly.FromDateTime(now),
+            CreatedAt = now,
+            ModifiedAt = now,
+        };
+
+        await insulinRepository.CreateAsync(demoInsulin, cancellationToken);
+        _logger.LogInformation(
+            "Created demo PatientInsulin: {Name} (DIA={Dia}h, Peak={Peak}min)",
+            demoInsulin.Name,
+            demoInsulin.Dia,
+            demoInsulin.Peak
         );
     }
 

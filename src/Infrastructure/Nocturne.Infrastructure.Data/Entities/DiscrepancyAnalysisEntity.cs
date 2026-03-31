@@ -8,8 +8,17 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// Entity for storing compatibility proxy response comparison results and discrepancy analysis
 /// </summary>
 [Table("discrepancy_analyses")]
-public class DiscrepancyAnalysisEntity
+public class DiscrepancyAnalysisEntity : ITenantScoped
 {
+    /// <summary>
+    /// Identifier of the tenant this discrepancy analysis belongs to
+    /// </summary>
+    /// <summary>
+    /// The unique identifier of the tenant this record belongs to.
+    /// </summary>
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
+
     /// <summary>
     /// Unique identifier for the analysis
     /// </summary>

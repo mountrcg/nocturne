@@ -9,8 +9,17 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// Supports various notification types with flexible actions and resolution conditions
 /// </summary>
 [Table("in_app_notifications")]
-public class InAppNotificationEntity
+public class InAppNotificationEntity : ITenantScoped
 {
+    /// <summary>
+    /// Identifier of the tenant this notification belongs to
+    /// </summary>
+    /// <summary>
+    /// The unique identifier of the tenant this record belongs to.
+    /// </summary>
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
+
     /// <summary>
     /// Primary key - UUID Version 7 for time-ordered, globally unique identification
     /// </summary>

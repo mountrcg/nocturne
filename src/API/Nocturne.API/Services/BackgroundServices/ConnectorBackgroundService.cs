@@ -1,9 +1,13 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Nocturne.Connectors.Core.Interfaces;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Multitenancy;
+using Nocturne.Infrastructure.Data;
 
 namespace Nocturne.API.Services.BackgroundServices;
 
@@ -17,6 +21,12 @@ public abstract class ConnectorBackgroundService<TConfig> : BackgroundService
     protected readonly IServiceProvider ServiceProvider;
     protected readonly ILogger Logger;
     protected readonly TConfig Config;
+
+    /// <summary>
+    /// Tracks the last sync time per tenant so each tenant's configured
+    /// SyncIntervalMinutes is respected independently.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, DateTime> _lastSyncByTenant = new();
 
     protected ConnectorBackgroundService(
         IServiceProvider serviceProvider,
@@ -35,27 +45,36 @@ public abstract class ConnectorBackgroundService<TConfig> : BackgroundService
     protected abstract string ConnectorName { get; }
 
     /// <summary>
-    /// Performs a single sync operation using the connector service
+    /// Performs a single sync operation using the connector service.
+    /// Services should be resolved from the provided <paramref name="scopeProvider"/>
+    /// which has the tenant context already set.
     /// </summary>
+    /// <param name="scopeProvider">Tenant-scoped service provider</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>True if sync was successful, false otherwise</returns>
-    protected abstract Task<bool> PerformSyncAsync(CancellationToken cancellationToken);
+    protected abstract Task<bool> PerformSyncAsync(IServiceProvider scopeProvider, CancellationToken cancellationToken, ISyncProgressReporter? progressReporter = null);
 
     /// <summary>
     /// Loads runtime configuration and secrets from the database and applies them
     /// to the Config singleton. This ensures DB-stored values (including encrypted
     /// passwords) are available to the connector at runtime.
     /// </summary>
-    protected async Task LoadDatabaseConfigurationAsync(CancellationToken ct)
+    /// <returns>True if a database configuration exists for this connector, false otherwise.</returns>
+    protected async Task<bool> LoadDatabaseConfigurationAsync(IServiceProvider scopeProvider, CancellationToken ct)
     {
         try
         {
-            using var scope = ServiceProvider.CreateScope();
-            var configService = scope.ServiceProvider.GetRequiredService<IConnectorConfigurationService>();
+            var configService = scopeProvider.GetRequiredService<IConnectorConfigurationService>();
 
             // Load runtime configuration from DB
             var dbConfig = await configService.GetConfigurationAsync(ConnectorName, ct);
-            if (dbConfig?.Configuration != null)
+            if (dbConfig == null)
+            {
+                Logger.LogDebug("No configuration found for {ConnectorName}, skipping sync", ConnectorName);
+                return false;
+            }
+
+            if (dbConfig.Configuration != null)
             {
                 ApplyJsonToConfig(dbConfig.Configuration);
                 Logger.LogDebug("Applied database configuration for {ConnectorName}", ConnectorName);
@@ -68,12 +87,15 @@ public abstract class ConnectorBackgroundService<TConfig> : BackgroundService
                 ApplySecretsToConfig(secrets);
                 Logger.LogDebug("Applied {Count} secrets for {ConnectorName}", secrets.Count, ConnectorName);
             }
+
+            return true;
         }
         catch (Exception ex)
         {
             Logger.LogWarning(ex,
                 "Failed to load database configuration for {ConnectorName}, using environment/startup values",
                 ConnectorName);
+            return false;
         }
     }
 
@@ -133,89 +155,167 @@ public abstract class ConnectorBackgroundService<TConfig> : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Updates the health state for this connector in the database
+    /// </summary>
+    private async Task UpdateHealthStateAsync(
+        IServiceProvider scopeProvider,
+        DateTime? lastSyncAttempt = null,
+        DateTime? lastSuccessfulSync = null,
+        string? lastErrorMessage = null,
+        DateTime? lastErrorAt = null,
+        bool? isHealthy = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        try
+        {
+            var configService = scopeProvider.GetRequiredService<IConnectorConfigurationService>();
+
+            await configService.UpdateHealthStateAsync(
+                ConnectorName,
+                lastSyncAttempt,
+                lastSuccessfulSync,
+                lastErrorMessage,
+                lastErrorAt,
+                isHealthy,
+                cancellationToken
+            );
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(
+                ex,
+                "Failed to update health state for {ConnectorName}",
+                ConnectorName
+            );
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Load configuration and secrets from DB before checking enabled state
-        await LoadDatabaseConfigurationAsync(stoppingToken);
-
-        if (!Config.Enabled)
-        {
-            Logger.LogInformation(
-                "{ConnectorName} connector is disabled, background service will not run",
-                ConnectorName
-            );
-            return;
-        }
-
-        if (Config.SyncIntervalMinutes <= 0)
-        {
-            Logger.LogInformation(
-                "{ConnectorName} connector is disabled (SyncIntervalMinutes <= 0), background service will not run",
-                ConnectorName
-            );
-            return;
-        }
+        // Wait briefly to let the application fully start
+        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
         Logger.LogInformation(
-            "{ConnectorName} connector background service started with {SyncInterval} minute intervals",
-            ConnectorName,
-            Config.SyncIntervalMinutes
-        );
+            "{ConnectorName} connector background service started",
+            ConnectorName);
 
         try
         {
-            var syncInterval = TimeSpan.FromMinutes(Config.SyncIntervalMinutes);
-
-            using var timer = new PeriodicTimer(syncInterval);
+            // Poll every minute; each tenant is only synced when its own
+            // SyncIntervalMinutes has elapsed since its last sync.
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
 
             do
             {
                 try
                 {
-                    Logger.LogDebug("Starting {ConnectorName} data sync cycle", ConnectorName);
-
-                    var success = await PerformSyncAsync(stoppingToken);
-
-                    if (success)
-                    {
-                        Logger.LogInformation(
-                            "{ConnectorName} data sync completed successfully",
-                            ConnectorName
-                        );
-                    }
-                    else
-                    {
-                        Logger.LogWarning("{ConnectorName} data sync failed", ConnectorName);
-                    }
+                    await SyncAllTenantsAsync(stoppingToken);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    Logger.LogError(ex, "Error during {ConnectorName} data sync cycle", ConnectorName);
+                    Logger.LogError(ex, "Error during {ConnectorName} tenant sync cycle", ConnectorName);
                 }
             } while (await timer.WaitForNextTickAsync(stoppingToken));
         }
         catch (OperationCanceledException)
         {
-            Logger.LogInformation(
-                "{ConnectorName} connector background service cancellation requested",
-                ConnectorName
-            );
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(
-                ex,
-                "Unexpected error in {ConnectorName} connector background service",
-                ConnectorName
-            );
-            throw;
+            Logger.LogInformation("{ConnectorName} connector background service stopping", ConnectorName);
         }
         finally
         {
             Logger.LogInformation(
                 "{ConnectorName} connector background service stopped",
-                ConnectorName
-            );
+                ConnectorName);
+        }
+    }
+
+    private async Task SyncAllTenantsAsync(CancellationToken stoppingToken)
+    {
+        using var lookupScope = ServiceProvider.CreateScope();
+        var factory = lookupScope.ServiceProvider.GetRequiredService<IDbContextFactory<NocturneDbContext>>();
+        await using var lookupContext = await factory.CreateDbContextAsync(stoppingToken);
+        var tenants = await lookupContext.Tenants.AsNoTracking()
+            .Where(t => t.IsActive)
+            .Select(t => new { t.Id, t.Slug, t.DisplayName })
+            .ToListAsync(stoppingToken);
+
+        foreach (var tenant in tenants)
+        {
+            try
+            {
+                await SyncForTenantAsync(tenant.Id, tenant.Slug, tenant.DisplayName, stoppingToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.LogError(ex,
+                    "Error syncing {ConnectorName} for tenant {TenantSlug}",
+                    ConnectorName, tenant.Slug);
+            }
+        }
+    }
+
+    private async Task SyncForTenantAsync(Guid tenantId, string tenantSlug, string displayName, CancellationToken stoppingToken)
+    {
+        using var scope = ServiceProvider.CreateScope();
+
+        // Set tenant context for this scope
+        var tenantAccessor = scope.ServiceProvider.GetRequiredService<ITenantAccessor>();
+        tenantAccessor.SetTenant(new TenantContext(tenantId, tenantSlug, displayName, true));
+
+        // Load tenant-specific connector configuration; skip if no config exists in DB
+        var hasConfig = await LoadDatabaseConfigurationAsync(scope.ServiceProvider, stoppingToken);
+        if (!hasConfig)
+            return;
+
+        if (!Config.Enabled || Config.SyncIntervalMinutes <= 0)
+            return;
+
+        // Only sync when the tenant's configured interval has elapsed
+        var now = DateTime.UtcNow;
+        var interval = TimeSpan.FromMinutes(Config.SyncIntervalMinutes);
+        if (_lastSyncByTenant.TryGetValue(tenantId, out var lastSync) && now - lastSync < interval)
+            return;
+
+        Logger.LogDebug("Syncing {ConnectorName} for tenant {TenantSlug}", ConnectorName, tenantSlug);
+
+        _lastSyncByTenant[tenantId] = now;
+
+        await UpdateHealthStateAsync(
+            scope.ServiceProvider,
+            lastSyncAttempt: now,
+            cancellationToken: stoppingToken);
+
+        var progressReporter = scope.ServiceProvider.GetService<ISyncProgressReporter>();
+        var success = await PerformSyncAsync(scope.ServiceProvider, stoppingToken, progressReporter);
+
+        if (success)
+        {
+            Logger.LogInformation(
+                "{ConnectorName} sync completed for tenant {TenantSlug}",
+                ConnectorName, tenantSlug);
+
+            await UpdateHealthStateAsync(
+                scope.ServiceProvider,
+                lastSuccessfulSync: DateTime.UtcNow,
+                isHealthy: true,
+                lastErrorMessage: string.Empty,
+                lastErrorAt: DateTime.MinValue,
+                cancellationToken: stoppingToken);
+        }
+        else
+        {
+            Logger.LogWarning(
+                "{ConnectorName} sync failed for tenant {TenantSlug}",
+                ConnectorName, tenantSlug);
+
+            await UpdateHealthStateAsync(
+                scope.ServiceProvider,
+                isHealthy: false,
+                lastErrorMessage: "Sync failed after retries",
+                lastErrorAt: DateTime.UtcNow,
+                cancellationToken: stoppingToken);
         }
     }
 

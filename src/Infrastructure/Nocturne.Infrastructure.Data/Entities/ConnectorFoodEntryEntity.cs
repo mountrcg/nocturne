@@ -8,8 +8,17 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// PostgreSQL entity for connector-imported food entries.
 /// </summary>
 [Table("connector_food_entries")]
-public class ConnectorFoodEntryEntity
+public class ConnectorFoodEntryEntity : ITenantScoped
 {
+    /// <summary>
+    /// Identifier of the tenant this food entry belongs to
+    /// </summary>
+    /// <summary>
+    /// The unique identifier of the tenant this record belongs to.
+    /// </summary>
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
+
     /// <summary>
     /// Primary key - UUID Version 7 for time-ordered, globally unique identification
     /// </summary>

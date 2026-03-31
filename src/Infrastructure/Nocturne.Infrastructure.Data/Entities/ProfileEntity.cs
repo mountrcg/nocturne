@@ -8,8 +8,17 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// Maps to Nocturne.Core.Models.Profile
 /// </summary>
 [Table("profiles")]
-public class ProfileEntity
+public class ProfileEntity : ITenantScoped
 {
+    /// <summary>
+    /// Identifier of the tenant this profile record belongs to
+    /// </summary>
+    /// <summary>
+    /// The unique identifier of the tenant this record belongs to.
+    /// </summary>
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
+
     /// <summary>
     /// Primary key - UUID Version 7 for time-ordered, globally unique identification
     /// </summary>

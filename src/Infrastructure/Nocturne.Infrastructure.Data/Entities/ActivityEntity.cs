@@ -8,8 +8,14 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// Maps to Nocturne.Core.Models.Activity
 /// </summary>
 [Table("activities")]
-public class ActivityEntity
+public class ActivityEntity : ITenantScoped
 {
+    /// <summary>
+    /// The unique identifier of the tenant this activity belongs to
+    /// </summary>
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
+
     /// <summary>
     /// Primary key - UUID Version 7 for time-ordered, globally unique identification
     /// </summary>
@@ -32,7 +38,7 @@ public class ActivityEntity
     /// <summary>
     /// Date and time as ISO 8601 string
     /// </summary>
-    [Column("dateString")]
+    [Column("date_string")]
     [MaxLength(50)]
     public string? DateString { get; set; }
 
@@ -71,14 +77,14 @@ public class ActivityEntity
     /// <summary>
     /// Who entered this activity record
     /// </summary>
-    [Column("enteredBy")]
+    [Column("entered_by")]
     [MaxLength(255)]
     public string? EnteredBy { get; set; }
 
     /// <summary>
     /// UTC offset in minutes
     /// </summary>
-    [Column("utcOffset")]
+    [Column("utc_offset")]
     public int? UtcOffset { get; set; }
 
     /// <summary>

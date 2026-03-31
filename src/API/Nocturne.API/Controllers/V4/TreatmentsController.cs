@@ -1,11 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Nocturne.API.Attributes;
+using OpenApi.Remote.Attributes;
 using Nocturne.API.Extensions;
 using Nocturne.API.Services;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Repositories;
 using Nocturne.Core.Models;
-using Nocturne.Infrastructure.Data.Repositories;
 
 namespace Nocturne.API.Controllers.V4;
 
@@ -23,7 +23,7 @@ namespace Nocturne.API.Controllers.V4;
 [Authorize]
 public class TreatmentsController : ControllerBase
 {
-    private readonly TreatmentRepository _repository;
+    private readonly ITreatmentRepository _repository;
     private readonly IDocumentProcessingService _documentProcessingService;
     private readonly ITrackerTriggerService _trackerTriggerService;
     private readonly ITrackerSuggestionService _trackerSuggestionService;
@@ -31,7 +31,7 @@ public class TreatmentsController : ControllerBase
     private readonly ILogger<TreatmentsController> _logger;
 
     public TreatmentsController(
-        TreatmentRepository repository,
+        ITreatmentRepository repository,
         IDocumentProcessingService documentProcessingService,
         ITrackerTriggerService trackerTriggerService,
         ITrackerSuggestionService trackerSuggestionService,
@@ -61,6 +61,7 @@ public class TreatmentsController : ControllerBase
     [HttpGet]
     [AllowAnonymous]
     [RemoteQuery]
+    [ResponseCache(Duration = 90, VaryByQueryKeys = new[] { "*" })]
     [ProducesResponseType(typeof(Treatment[]), StatusCodes.Status200OK)]
     public async Task<ActionResult<Treatment[]>> GetTreatments(
         [FromQuery] string? eventType = null,
@@ -118,7 +119,7 @@ public class TreatmentsController : ControllerBase
     )
     {
         if (treatment == null)
-            return BadRequest("Treatment data is required");
+            return Problem(detail: "Treatment data is required", statusCode: 400, title: "Bad Request");
 
         var userId = HttpContext.GetSubjectIdString()!;
 
@@ -129,7 +130,7 @@ public class TreatmentsController : ControllerBase
         var created = await _repository.CreateTreatmentAsync(processedTreatment, cancellationToken);
 
         if (created == null)
-            return StatusCode(500, "Failed to create treatment");
+            return Problem(detail: "Failed to create treatment", statusCode: 500, title: "Internal Server Error");
 
         _logger.LogInformation(
             "Created V4 treatment {Id} ({EventType}) for user {UserId}",
@@ -163,10 +164,10 @@ public class TreatmentsController : ControllerBase
     )
     {
         if (treatments == null || treatments.Length == 0)
-            return BadRequest("Treatment data is required");
+            return Problem(detail: "Treatment data is required", statusCode: 400, title: "Bad Request");
 
         if (treatments.Length > 1000)
-            return BadRequest("Bulk operations are limited to 1000 treatments per request");
+            return Problem(detail: "Bulk operations are limited to 1000 treatments per request", statusCode: 400, title: "Bad Request");
 
         var userId = HttpContext.GetSubjectIdString()!;
 
@@ -246,7 +247,7 @@ public class TreatmentsController : ControllerBase
     )
     {
         if (treatment == null)
-            return BadRequest("Treatment data is required");
+            return Problem(detail: "Treatment data is required", statusCode: 400, title: "Bad Request");
 
         // Ensure the treatment has the correct ID
         treatment.Id = id;

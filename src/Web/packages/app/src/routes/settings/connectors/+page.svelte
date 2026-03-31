@@ -1,16 +1,19 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { getConnectorStatuses } from "$api/services.remote";
   import {
     getServicesOverview,
     getUploaderSetup,
+    getConnectorCapabilities,
     deleteDemoData as deleteDemoDataRemote,
     deleteDataSourceData as deleteDataSourceDataRemote,
-    getConnectorStatuses,
-    getConnectorCapabilities,
+  } from "$api/generated/services.generated.remote";
+  import { getDataTypeLabel } from "$lib/utils/data-type-labels";
+  import {
     startDeduplicationJob,
-    getDeduplicationJobStatus,
-    cancelDeduplicationJob,
-  } from "$lib/data/services.remote";
+    getJobStatus as getDeduplicationJobStatus,
+    cancelJob as cancelDeduplicationJob,
+  } from "$api/generated/deduplications.generated.remote";
   import type {
     ServicesOverview,
     UploaderApp,
@@ -44,7 +47,6 @@
   import * as Tooltip from "$lib/components/ui/tooltip";
 
   import {
-    Plug,
     RefreshCw,
     CheckCircle,
     AlertCircle,
@@ -56,10 +58,8 @@
     Loader2,
     Copy,
     Check,
-    Activity,
     Wifi,
     WifiOff,
-    Settings,
     ChevronRight,
     Trash2,
     AlertTriangle,
@@ -70,10 +70,16 @@
     Wrench,
   } from "lucide-svelte";
   import SettingsPageSkeleton from "$lib/components/settings/SettingsPageSkeleton.svelte";
+  import DataSourceRow from "$lib/components/settings/DataSourceRow.svelte";
+  import type { DataSourceStatus } from "$lib/components/settings/DataSourceRow.svelte";
+  import ConnectedApps from "$lib/components/settings/ConnectedApps.svelte";
+  import ApiTokens from "$lib/components/settings/ApiTokens.svelte";
   import Apple from "lucide-svelte/icons/apple";
   import TabletSmartphone from "lucide-svelte/icons/tablet-smartphone";
   import { getApiClient } from "$lib/api";
   import { toast } from "svelte-sonner";
+  import { getCategoryIcon, mapConnectorStatus } from "$lib/utils/connector-display";
+  import { getRealtimeStore } from "$lib/stores/realtime-store.svelte";
 
   let servicesOverview = $state<ServicesOverview | null>(null);
   let isLoading = $state(true);
@@ -87,8 +93,8 @@
   let showDemoDataDialog = $state(false);
   let isDeletingDemo = $state(false);
   let demoDeleteResult = $state<{
-    success: boolean;
-    entriesDeleted?: number;
+    success?: boolean;
+    totalDeleted?: number;
     error?: string;
   } | null>(null);
 
@@ -99,8 +105,8 @@
   let isDeletingDataSource = $state(false);
   let deleteConfirmText = $state("");
   let deleteResult = $state<{
-    success: boolean;
-    entriesDeleted?: number;
+    success?: boolean;
+    totalDeleted?: number;
     error?: string;
   } | null>(null);
 
@@ -142,12 +148,25 @@
   let selectedConnectorCapabilities = $state<ConnectorCapabilities | null>(
     null
   );
-  let isLoadingConnectorCapabilities = $state(false);
   let connectorCapabilitiesById = $state<
     Record<string, ConnectorCapabilities | null>
   >({});
   let quickSyncingById = $state<Record<string, boolean>>({});
   let showConnectorDialog = $state(false);
+
+  // Realtime sync progress from WebSocket
+  const realtimeStore = getRealtimeStore();
+  let syncProgressByConnector = $derived(realtimeStore.syncProgressByConnector);
+
+  $effect(() => {
+    const progress = syncProgressByConnector;
+    const hasCompleted = Object.values(progress).some(
+      (p) => p.phase === "Completed" || p.phase === "Failed"
+    );
+    if (hasCompleted) {
+      loadConnectorStatuses();
+    }
+  });
 
   // Deduplication state
   let showDeduplicationDialog = $state(false);
@@ -155,6 +174,7 @@
   let deduplicationJobId = $state<string | null>(null);
   let deduplicationStatus = $state<DeduplicationJobStatus | null>(null);
   let deduplicationError = $state<string | null>(null);
+  let deduplicationStartTime = $state<Date | null>(null);
   let deduplicationPollingInterval = $state<ReturnType<
     typeof setInterval
   > | null>(null);
@@ -208,14 +228,11 @@
       return;
     }
 
-    isLoadingConnectorCapabilities = true;
     try {
       selectedConnectorCapabilities = await getConnectorCapabilities(connectorId);
     } catch (e) {
       console.error("Failed to load connector capabilities", e);
       selectedConnectorCapabilities = null;
-    } finally {
-      isLoadingConnectorCapabilities = false;
     }
   }
 
@@ -257,22 +274,24 @@
     isDeduplicating = true;
     deduplicationError = null;
     deduplicationStatus = null;
+    deduplicationStartTime = new Date();
 
     try {
       const result = await startDeduplicationJob();
-      if (result.success && result.jobId) {
+      if (result.jobId) {
         deduplicationJobId = result.jobId;
         // Start polling for status
         startDeduplicationPolling();
       } else {
-        deduplicationError =
-          result.error ?? "Failed to start deduplication job";
+        deduplicationError = "Failed to start deduplication job";
         isDeduplicating = false;
+        deduplicationStartTime = null;
       }
     } catch (e) {
       deduplicationError =
         e instanceof Error ? e.message : "Failed to start deduplication";
       isDeduplicating = false;
+      deduplicationStartTime = null;
     }
   }
 
@@ -298,6 +317,30 @@
             if (status.state === "Failed") {
               deduplicationError = status.result?.errorMessage ?? "Job failed";
             }
+
+            // Show toast if dialog is closed or job took longer than 2 minutes
+            const elapsed = deduplicationStartTime
+              ? Date.now() - deduplicationStartTime.getTime()
+              : 0;
+            const twoMinutes = 2 * 60 * 1000;
+
+            if (!showDeduplicationDialog || elapsed > twoMinutes) {
+              if (status.state === "Completed") {
+                const processed = status.result?.totalRecordsProcessed?.toLocaleString() ?? "0";
+                const groups = status.result?.duplicateGroupsFound?.toLocaleString() ?? "0";
+                toast.success("Deduplication complete", {
+                  description: `Processed ${processed} records, found ${groups} duplicate groups`,
+                });
+              } else if (status.state === "Failed") {
+                toast.error("Deduplication failed", {
+                  description: status.result?.errorMessage ?? "An unknown error occurred",
+                });
+              } else if (status.state === "Cancelled") {
+                toast.info("Deduplication cancelled");
+              }
+            }
+
+            deduplicationStartTime = null;
           }
         }
       } catch (e) {
@@ -318,7 +361,7 @@
 
     try {
       const result = await cancelDeduplicationJob(deduplicationJobId);
-      if (result.success) {
+      if (result.cancelled) {
         stopDeduplicationPolling();
         isDeduplicating = false;
       }
@@ -329,12 +372,14 @@
 
   function closeDeduplicationDialog() {
     showDeduplicationDialog = false;
-    stopDeduplicationPolling();
-    // Reset state for next time
+    // If not running, reset state for next time
+    // If running, keep polling in the background — toast will notify on completion
     if (!isDeduplicating) {
+      stopDeduplicationPolling();
       deduplicationJobId = null;
       deduplicationStatus = null;
       deduplicationError = null;
+      deduplicationStartTime = null;
     }
   }
 
@@ -378,7 +423,7 @@
       const result = await deleteDemoDataRemote();
       demoDeleteResult = {
         success: result.success ?? false,
-        entriesDeleted: result.entriesDeleted,
+        totalDeleted: result.totalDeleted,
         error: result.error ?? undefined,
       };
       if (result.success) {
@@ -403,7 +448,7 @@
       const result = await deleteDataSourceDataRemote(selectedDataSource.id!);
       deleteResult = {
         success: result.success ?? false,
-        entriesDeleted: result.entriesDeleted,
+        totalDeleted: result.totalDeleted,
         error: result.error ?? undefined,
       };
       if (result.success) {
@@ -787,25 +832,6 @@
     return d.toLocaleDateString();
   }
 
-  function getCategoryIcon(category: string | undefined) {
-    switch (category) {
-      case "cgm":
-        return Activity;
-      case "pump":
-        return Database;
-      case "aid-system":
-        return Settings;
-      case "connector":
-        return Cloud;
-      case "uploader":
-        return Smartphone;
-      case "demo":
-        return Sparkles;
-      default:
-        return Plug;
-    }
-  }
-
   function getPlatformIcon(platform: string | undefined) {
     switch (platform) {
       case "ios":
@@ -817,6 +843,19 @@
     }
   }
 
+  function mapDataSourceStatus(source: DataSourceInfo): DataSourceStatus {
+    if (isDemoDataSource(source)) return "demo";
+    switch (source.status) {
+      case "active":
+        return "active";
+      case "stale":
+        return "stale";
+      default:
+        return "inactive";
+    }
+  }
+
+
   async function copyToClipboard(text: string, field: string) {
     await navigator.clipboard.writeText(text);
     copiedField = field;
@@ -827,16 +866,16 @@
 </script>
 
 <svelte:head>
-  <title>Services - Settings - Nocturne</title>
+  <title>Connectors & Apps - Settings - Nocturne</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 max-w-4xl space-y-6">
+<div class="container mx-auto max-w-4xl p-6 space-y-6">
   <!-- Header -->
   <div class="flex items-center justify-between">
     <div>
-      <h1 class="text-2xl font-bold tracking-tight">Data Sources & Services</h1>
+      <h1 class="text-2xl font-bold tracking-tight">Connectors & Connected Apps</h1>
       <p class="text-muted-foreground">
-        See what's sending data to Nocturne and set up new connections
+        Manage data sources, set up new connections, and control app access
       </p>
     </div>
     <Button variant="outline" size="sm" onclick={refreshAll} class="gap-2">
@@ -886,87 +925,34 @@
         {:else}
           <div class="space-y-3">
             {#each servicesOverview.activeDataSources as source}
-              {@const Icon = getCategoryIcon(source.category)}
               {@const matchingUploader = getMatchingUploader(source)}
               {@const isDemo = isDemoDataSource(source)}
-              <button
-                class="w-full flex items-center justify-between p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors text-left {isDemo
-                  ? 'border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20'
-                  : ''}"
+              <DataSourceRow
+                name={source.name ?? "Unknown"}
+                icon={getCategoryIcon(source.category)}
+                status={mapDataSourceStatus(source)}
+                totalEntries={source.totalEntries}
+                entriesLast24h={source.entriesLast24h}
+                lastSeen={source.lastSeen}
                 onclick={() => openDataSourceDialog(source)}
               >
-                <div class="flex items-center gap-4">
-                  <div
-                    class="flex h-10 w-10 items-center justify-center rounded-lg {isDemo
-                      ? 'bg-purple-100 dark:bg-purple-900/30'
-                      : source.status === 'active'
-                        ? 'bg-green-100 dark:bg-green-900/30'
-                        : source.status === 'stale'
-                          ? 'bg-yellow-100 dark:bg-yellow-900/30'
-                          : 'bg-muted'}"
-                  >
-                    <Icon
-                      class="h-5 w-5 {isDemo
-                        ? 'text-purple-600 dark:text-purple-400'
-                        : source.status === 'active'
-                          ? 'text-green-600 dark:text-green-400'
-                          : source.status === 'stale'
-                            ? 'text-yellow-600 dark:text-yellow-400'
-                            : 'text-muted-foreground'}"
-                    />
-                  </div>
-                  <div>
-                    <div class="flex items-center gap-2 flex-wrap">
-                      <span class="font-medium">
-                        {source.name ?? "Unknown"}
-                      </span>
-                      {#if isDemo}
-                        <Badge
-                          variant="secondary"
-                          class="bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-100"
-                        >
-                          <Sparkles class="h-3 w-3 mr-1" />
-                          Demo
-                        </Badge>
-                      {:else}
-                        <Badge
-                          variant={getStatusBadge(source.status).variant}
-                          class={getStatusBadge(source.status).class}
-                        >
-                          {#if source.status === "active"}
-                            <CheckCircle class="h-3 w-3 mr-1" />
-                          {:else if source.status === "stale"}
-                            <Clock class="h-3 w-3 mr-1" />
-                          {:else}
-                            <AlertCircle class="h-3 w-3 mr-1" />
-                          {/if}
-                          {getStatusBadge(source.status).text}
-                        </Badge>
-                      {/if}
-                      {#if matchingUploader}
-                        <Badge variant="outline" class="text-xs">
-                          {matchingUploader.name}
-                        </Badge>
-                      {/if}
-                    </div>
-                    <p class="text-sm text-muted-foreground">
-                      {source.description ?? source.deviceId}
-                    </p>
-                  </div>
-                </div>
-                <div class="flex items-center gap-4">
-                  <div class="text-right text-sm">
-                    <div class="flex items-center gap-1 text-muted-foreground">
-                      <Clock class="h-3 w-3" />
-                      {formatLastSeen(source.lastSeen)}
-                    </div>
-                    <div class="text-xs text-muted-foreground mt-1">
-                      {source.entriesLast24h ?? 0} records (24h)
-                    </div>
-                  </div>
-                  <ChevronRight class="h-4 w-4 text-muted-foreground" />
-                </div>
-              </button>
+                {#snippet badges()}
+                  {#if isDemo}
+                    <Badge
+                      variant="secondary"
+                      class="bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-100 text-xs"
+                    >
+                      <Sparkles class="h-3 w-3 mr-1" />
+                      Demo
+                    </Badge>
+                  {/if}
+                  {#if matchingUploader}
+                    <Badge variant="outline" class="text-xs">
+                      {matchingUploader.name}
+                    </Badge>
+                  {/if}
+                {/snippet}
+              </DataSourceRow>
             {/each}
           </div>
         {/if}
@@ -1195,11 +1181,10 @@
       <CardContent>
         <div class="grid gap-3 sm:grid-cols-2">
           {#each servicesOverview.availableConnectors ?? [] as connector}
-            {@const Icon = getCategoryIcon(connector.category)}
             {@const connectorStatus = connectorStatuses.find(
               (cs) => cs.id === connector.id
             )}
-            {@const isConnected = connectorStatus?.isHealthy === true}
+            {@const isConnected = connectorStatus?.isHealthy === true || connectorStatus?.state === "Configured"}
             {@const isDisabledWithData =
               connectorStatus?.state === "Disabled" &&
               (connectorStatus?.totalEntries ?? 0) > 0}
@@ -1210,117 +1195,87 @@
               ? connectorCapabilitiesById[connector.id]
               : null}
             {@const canQuickSync =
-              connectorStatus?.isHealthy === true &&
+              (connectorStatus?.isHealthy === true || connectorStatus?.state === "Configured") &&
               (connectorCapabilities?.supportsManualSync ?? true)}
 
             {#if isConnected && connectorStatus}
-              <!-- Connected connector - clickable button with dialog -->
-              <div class="relative">
-                <button
-                  class="flex w-full items-center gap-4 p-4 rounded-lg border hover:border-primary/50 hover:bg-accent/50 transition-colors text-left group border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-950/20"
-                  onclick={async () => {
-                    selectedConnector = connectorStatus;
-                    // Initialize granular sync dates in local time
-                    const now = new Date();
-                    const thirtyDaysAgo = new Date(
-                      now.getTime() - 30 * 24 * 60 * 60 * 1000
-                    );
-                    // format for datetime-local: YYYY-MM-DDThh:mm (local time)
-                    const formatLocal = (d: Date) => {
-                      const offset = d.getTimezoneOffset() * 60000;
-                      return new Date(d.getTime() - offset)
-                        .toISOString()
-                        .slice(0, 16);
-                    };
-                    granularSyncTo = formatLocal(now);
-                    granularSyncFrom = formatLocal(thirtyDaysAgo);
-                    granularSyncResult = null;
+              <!-- Connected connector -->
+              <DataSourceRow
+                name={connector.name ?? connector.id ?? "Unknown"}
+                icon={getCategoryIcon(connector.category)}
+                status={syncProgressByConnector[connector.id ?? ""]?.phase === "Syncing" ? "syncing" : mapConnectorStatus(connectorStatus)}
+                syncProgress={syncProgressByConnector[connector.id ?? ""] ?? null}
+                statusMessage={!connectorStatus.isHealthy ? connectorStatus.stateMessage ?? undefined : undefined}
+                totalEntries={connectorStatus.totalEntries}
+                entriesLast24h={connectorStatus.entriesLast24Hours}
+                lastSeen={connectorStatus.lastEntryTime}
+                lastSyncAttempt={connectorStatus.lastSyncAttempt}
+                lastSuccessfulSync={connectorStatus.lastSuccessfulSync}
+                totalBreakdown={connectorStatus.totalItemsBreakdown ?? undefined}
+                last24hBreakdown={connectorStatus.itemsLast24HoursBreakdown ?? undefined}
+                onclick={async () => {
+                  selectedConnector = connectorStatus;
+                  const now = new Date();
+                  const thirtyDaysAgo = new Date(
+                    now.getTime() - 30 * 24 * 60 * 60 * 1000
+                  );
+                  const formatLocal = (d: Date) => {
+                    const offset = d.getTimezoneOffset() * 60000;
+                    return new Date(d.getTime() - offset)
+                      .toISOString()
+                      .slice(0, 16);
+                  };
+                  granularSyncTo = formatLocal(now);
+                  granularSyncFrom = formatLocal(thirtyDaysAgo);
+                  granularSyncResult = null;
 
-                    await loadConnectorCapabilitiesFor(connector.id);
-                    showConnectorDialog = true;
-                  }}
-                >
-                  <div
-                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-100 dark:bg-green-900/30"
-                  >
-                    <Icon class="h-5 w-5 text-green-600 dark:text-green-400" />
-                  </div>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 flex-wrap">
-                      <span class="font-medium">{connector.name}</span>
-                      {#if connectorStatus.state === "Syncing"}
-                        <Badge
-                          class="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100 text-xs"
-                        >
-                          <Loader2 class="h-3 w-3 mr-1 animate-spin" />
-                          Syncing
-                        </Badge>
-                      {:else if connectorStatus.state === "BackingOff"}
-                        <Badge
-                          variant="secondary"
-                          class="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-100 text-xs"
-                        >
-                          <Clock class="h-3 w-3 mr-1" />
-                          Backing Off
-                        </Badge>
-                      {:else if connectorStatus.state === "Error"}
-                        <Badge variant="destructive" class="text-xs">
-                          <AlertCircle class="h-3 w-3 mr-1" />
-                          Error
-                        </Badge>
+                  await loadConnectorCapabilitiesFor(connector.id);
+                  showConnectorDialog = true;
+                }}
+              >
+                {#snippet actions()}
+                  {#if connector.id && canQuickSync}
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      class="absolute right-3 top-1/2 -translate-y-1/2"
+                      disabled={quickSyncingById[connector.id] === true}
+                      onclick={(event) => {
+                        event.stopPropagation();
+                        triggerQuickSync(connector.id!);
+                      }}
+                    >
+                      {#if quickSyncingById[connector.id] === true}
+                        <Loader2 class="h-4 w-4 animate-spin" />
                       {:else}
-                        <Badge
-                          class="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100 text-xs"
-                        >
-                          <CheckCircle class="h-3 w-3 mr-1" />
-                          Active
-                        </Badge>
+                        <RefreshCw class="h-4 w-4" />
                       {/if}
-                    </div>
-                    <p class="text-sm text-muted-foreground">
-                      {connectorStatus.entriesLast24Hours?.toLocaleString() ?? 0} records in the last 24 hours
-                    </p>
-                  </div>
-                  {#if !canQuickSync}
-                    <ChevronRight
-                      class="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors"
-                    />
+                    </Button>
                   {/if}
-                </button>
-                {#if connector.id && canQuickSync}
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    class="absolute right-3 top-1/2 -translate-y-1/2"
-                    disabled={quickSyncingById[connector.id] === true}
-                    onclick={(event) => {
-                      event.stopPropagation();
-                      triggerQuickSync(connector.id!);
-                    }}
-                  >
-                    {#if quickSyncingById[connector.id] === true}
-                      <Loader2 class="h-4 w-4 animate-spin" />
-                    {:else}
-                      <RefreshCw class="h-4 w-4" />
-                    {/if}
-                  </Button>
-                {/if}
-              </div>
+                {/snippet}
+              </DataSourceRow>
             {:else if hasData}
-              <!-- Has data but not connected/disabled - clickable to view data and delete -->
+              <!-- Has data but not connected/disabled -->
               {@const entryCount = isDisabledWithData
                 ? (connectorStatus?.totalEntries ?? 0)
                 : (connectorDataSource?.totalEntries ?? 0)}
               {@const entries24h = isDisabledWithData
                 ? (connectorStatus?.entriesLast24Hours ?? 0)
                 : (connectorDataSource?.entriesLast24h ?? 0)}
-              {@const lastSeen = isDisabledWithData
+              {@const lastSeenDate = isDisabledWithData
                 ? connectorStatus?.lastEntryTime
                 : connectorDataSource?.lastSeen}
-              <button
-                class="flex items-center gap-4 p-4 rounded-lg border hover:border-primary/50 hover:bg-accent/50 transition-colors text-left group border-gray-300 dark:border-gray-700"
+              <DataSourceRow
+                name={connector.name ?? connector.id ?? "Unknown"}
+                icon={getCategoryIcon(connector.category)}
+                status={isDisabledWithData ? "disabled" : "offline"}
+                syncProgress={syncProgressByConnector[connector.id ?? ""] ?? null}
+                totalEntries={entryCount}
+                entriesLast24h={entries24h}
+                lastSeen={lastSeenDate}
+                totalBreakdown={isDisabledWithData ? connectorStatus?.totalItemsBreakdown ?? undefined : undefined}
+                last24hBreakdown={isDisabledWithData ? connectorStatus?.itemsLast24HoursBreakdown ?? undefined : undefined}
                 onclick={async () => {
-                  // Use connectorStatus if available (disabled connector), otherwise create synthetic
                   if (isDisabledWithData && connectorStatus) {
                     selectedConnector = connectorStatus;
                   } else {
@@ -1342,50 +1297,19 @@
                   showConnectorDialog = true;
                 }}
               >
-                <div
-                  class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-900/30"
-                >
-                  <Icon class="h-5 w-5 text-gray-600 dark:text-gray-400" />
-                </div>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class="font-medium">{connector.name}</span>
-                    {#if isDisabledWithData}
-                      <Badge
-                        variant="secondary"
-                        class="bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100 text-xs"
-                      >
-                        <WifiOff class="h-3 w-3 mr-1" />
-                        Disabled
-                      </Badge>
-                    {:else}
-                      <Badge variant="outline" class="text-xs">
-                        <WifiOff class="h-3 w-3 mr-1" />
-                        Offline
-                      </Badge>
-                    {/if}
-                    <Badge
-                      variant="secondary"
-                      class="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100 text-xs"
-                    >
-                      <Database class="h-3 w-3 mr-1" />
-                      Has Data
-                    </Badge>
-                  </div>
-                  <p class="text-sm text-muted-foreground">
-                    {entryCount?.toLocaleString() ?? 0} records
-                    {#if entries24h > 0}
-                      ({entries24h.toLocaleString()} in last 24 hours)
-                    {/if}
-                    • Last seen {formatLastSeen(lastSeen)}
-                  </p>
-                </div>
-                <ChevronRight
-                  class="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors"
-                />
-              </button>
+                {#snippet badges()}
+                  <Badge
+                    variant="secondary"
+                    class="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100 text-xs"
+                  >
+                    <Database class="h-3 w-3 mr-1" />
+                    Has Data
+                  </Badge>
+                {/snippet}
+              </DataSourceRow>
             {:else}
               <!-- Not connected and no data - show with configure button -->
+              {@const Icon = getCategoryIcon(connector.category)}
               <a
                 href="/settings/connectors/{connector.id?.toLowerCase()}"
                 class="flex items-center gap-4 p-4 rounded-lg border bg-muted/30 hover:border-primary/50 hover:bg-accent/50 transition-colors group"
@@ -1457,14 +1381,14 @@
                 <code
                   class="flex-1 px-3 py-2 rounded-md bg-muted text-sm font-mono truncate"
                 >
-                  {servicesOverview.apiEndpoint.baseUrl}
+                  {window.location.origin}
                 </code>
                 <Button
                   variant="outline"
                   size="icon"
                   onclick={() =>
                     copyToClipboard(
-                      servicesOverview!.apiEndpoint!.baseUrl!,
+                      window.location.origin,
                       "baseUrl"
                     )}
                 >
@@ -1482,14 +1406,14 @@
                 <code
                   class="flex-1 px-3 py-2 rounded-md bg-muted text-sm font-mono truncate"
                 >
-                  {servicesOverview.apiEndpoint.entriesEndpoint}
+                  {`${window.location.origin}/api/v1/entries`}
                 </code>
                 <Button
                   variant="outline"
                   size="icon"
                   onclick={() =>
                     copyToClipboard(
-                      servicesOverview!.apiEndpoint!.entriesEndpoint!,
+                      `${window.location.origin}/api/v1/entries`,
                       "entries"
                     )}
                 >
@@ -1543,13 +1467,24 @@
               class="mt-3 gap-2"
               onclick={() => (showDeduplicationDialog = true)}
             >
-              <Link2 class="h-4 w-4" />
-              Run Deduplication
+              {#if isDeduplicating}
+                <Loader2 class="h-4 w-4 animate-spin" />
+                Deduplication Running...
+              {:else}
+                <Link2 class="h-4 w-4" />
+                Run Deduplication
+              {/if}
             </Button>
           </div>
         </div>
       </CardContent>
     </Card>
+
+    <!-- Connected Apps Section -->
+    <ConnectedApps />
+
+    <!-- API Tokens Section -->
+    <ApiTokens />
   {/if}
 </div>
 
@@ -1557,9 +1492,9 @@
 <Dialog.Root bind:open={showSetupDialog}>
   <Dialog.Content class="max-w-2xl max-h-[80vh] overflow-y-auto">
     {#if selectedUploader && uploaderSetup}
+      {@const PlatformIcon = getPlatformIcon(selectedUploader.platform)}
       <Dialog.Header>
         <Dialog.Title class="flex items-center gap-2">
-          {@const PlatformIcon = getPlatformIcon(selectedUploader.platform)}
           <PlatformIcon class="h-5 w-5" />
           Set up {selectedUploader.name}
         </Dialog.Title>
@@ -1579,13 +1514,13 @@
               <code
                 class="flex-1 px-3 py-2 rounded-md bg-muted text-sm font-mono break-all"
               >
-                {uploaderSetup.baseUrl}
+                {window.location.origin}
               </code>
               <Button
                 variant="outline"
                 size="icon"
                 onclick={() =>
-                  copyToClipboard(uploaderSetup!.baseUrl!, "dialogUrl")}
+                  copyToClipboard(window.location.origin, "dialogUrl")}
               >
                 {#if copiedField === "dialogUrl"}
                   <Check class="h-4 w-4 text-green-500" />
@@ -1605,13 +1540,13 @@
                 <code
                   class="flex-1 px-3 py-2 rounded-md bg-muted text-sm font-mono break-all"
                 >
-                  {uploaderSetup.xdripStyleUrl}
+                  {`https://YOUR-API-SECRET@${window.location.host}/api/v1`}
                 </code>
                 <Button
                   variant="outline"
                   size="icon"
                   onclick={() =>
-                    copyToClipboard(uploaderSetup!.xdripStyleUrl!, "xdripUrl")}
+                    copyToClipboard(`https://YOUR-API-SECRET@${window.location.host}/api/v1`, "xdripUrl")}
                 >
                   {#if copiedField === "xdripUrl"}
                     <Check class="h-4 w-4 text-green-500" />
@@ -1718,7 +1653,7 @@
               <span class="font-medium">Demo data cleared successfully</span>
             </div>
             <p class="text-sm text-green-700 dark:text-green-300 mt-1">
-              Deleted {demoDeleteResult.entriesDeleted?.toLocaleString() ?? 0} records
+              Deleted {demoDeleteResult.totalDeleted?.toLocaleString() ?? 0} records
             </p>
           </div>
         {:else}
@@ -1919,7 +1854,7 @@
                   <span class="font-medium">Data deleted successfully</span>
                 </div>
                 <p class="text-sm text-green-700 dark:text-green-300 mt-1">
-                  Deleted {deleteResult.entriesDeleted?.toLocaleString() ?? 0} records
+                  Deleted {deleteResult.totalDeleted?.toLocaleString() ?? 0} records
                 </p>
               </div>
             {:else}
@@ -2152,44 +2087,21 @@
           </div>
         {/if}
 
-        {#if isLoadingConnectorCapabilities}
-          <div class="text-xs text-muted-foreground">
-            Loading connector capabilities...
-          </div>
-        {:else if selectedConnectorCapabilities}
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <span class="text-sm text-muted-foreground">
-                Supported data types
-              </span>
-              <div class="flex flex-wrap gap-1 justify-end">
-                {#if selectedConnectorCapabilities.supportedDataTypes &&
-                selectedConnectorCapabilities.supportedDataTypes.length > 0}
-                  {#each selectedConnectorCapabilities.supportedDataTypes as dataType}
-                    <Badge variant="outline" class="text-xs">
-                      {dataType}
-                    </Badge>
-                  {/each}
-                {:else}
-                  <span class="text-xs text-muted-foreground">Unknown</span>
-                {/if}
-              </div>
+        {#if selectedConnectorCapabilities}
+          {#if selectedConnectorCapabilities.supportsHistoricalSync === false}
+            <div
+              class="rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/20 p-3 text-xs text-blue-800 dark:text-blue-200"
+            >
+              Historical sync is not supported for this connector.
+              {#if selectedConnectorCapabilities.maxHistoricalDays}
+                Recent data only (last {selectedConnectorCapabilities.maxHistoricalDays} days).
+              {/if}
             </div>
-            {#if selectedConnectorCapabilities.supportsHistoricalSync === false}
-              <div
-                class="rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/20 p-3 text-xs text-blue-800 dark:text-blue-200"
-              >
-                Historical sync is not supported for this connector.
-                {#if selectedConnectorCapabilities.maxHistoricalDays}
-                  Recent data only (last {selectedConnectorCapabilities.maxHistoricalDays} days).
-                {/if}
-              </div>
-            {:else if selectedConnectorCapabilities.maxHistoricalDays}
-              <div class="text-xs text-muted-foreground">
-                Historical sync limited to the last {selectedConnectorCapabilities.maxHistoricalDays} days.
-              </div>
-            {/if}
-          </div>
+          {:else if selectedConnectorCapabilities.maxHistoricalDays}
+            <div class="text-xs text-muted-foreground">
+              Historical sync limited to the last {selectedConnectorCapabilities.maxHistoricalDays} days.
+            </div>
+          {/if}
         {/if}
 
         <!-- Notice for disabled or offline connectors -->
@@ -2251,7 +2163,7 @@
                         </div>
                         {#each Object.entries(selectedConnector.totalItemsBreakdown) as [type, count]}
                           <div class="flex justify-between gap-4 text-xs">
-                            <span>{type}</span>
+                            <span>{getDataTypeLabel(type)}</span>
                             <span class="font-mono">
                               {count?.toLocaleString()}
                             </span>
@@ -2291,7 +2203,7 @@
                         </div>
                         {#each Object.entries(selectedConnector.itemsLast24HoursBreakdown) as [type, count]}
                           <div class="flex justify-between gap-4 text-xs">
-                            <span>{type}</span>
+                            <span>{getDataTypeLabel(type)}</span>
                             <span class="font-mono">
                               {count?.toLocaleString()}
                             </span>
@@ -2331,8 +2243,8 @@
           </div>
         {/if}
 
-        <!-- Only show sync controls for healthy/online connectors -->
-        {#if selectedConnector.isHealthy &&
+        <!-- Only show sync controls for healthy/online/configured connectors -->
+        {#if (selectedConnector.isHealthy || selectedConnector.state === "Configured") &&
         selectedConnector.state !== "Offline" &&
         (selectedConnectorCapabilities?.supportsManualSync ?? true)}
           <Separator />
@@ -2605,6 +2517,11 @@
               </div>
             </div>
           {/if}
+
+          <p class="text-xs text-muted-foreground">
+            You can close this dialog — the job will continue in the background
+            and you'll be notified when it's done.
+          </p>
         </div>
       {:else}
         <div class="rounded-lg border bg-muted/50 p-4">

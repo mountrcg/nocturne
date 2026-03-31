@@ -1,9 +1,10 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Nocturne.API.Attributes;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
 
 namespace Nocturne.API.Controllers.V3;
 
@@ -14,15 +15,20 @@ namespace Nocturne.API.Controllers.V3;
 /// </summary>
 [ApiController]
 [Route("api/v3/[controller]")]
+[Authorize]
 public class SettingsController : BaseV3Controller<Settings>
 {
+    private readonly ISettingsRepository _settings;
+
     public SettingsController(
-        IPostgreSqlService postgreSqlService,
-        IDataFormatService dataFormatService,
+        ISettingsRepository settings,
         IDocumentProcessingService documentProcessingService,
         ILogger<SettingsController> logger
     )
-        : base(postgreSqlService, dataFormatService, documentProcessingService, logger) { }
+        : base(documentProcessingService, logger)
+    {
+        _settings = settings;
+    }
 
     /// <summary>
     /// Get settings with V3 API features including pagination, field selection, and advanced filtering
@@ -30,6 +36,7 @@ public class SettingsController : BaseV3Controller<Settings>
     /// </summary>
     /// <returns>V3 settings collection response</returns>
     [HttpGet]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/settings")]
     [ProducesResponseType(typeof(V3CollectionResponse<object>), 200)]
     [ProducesResponseType(typeof(V3ErrorResponse), 400)]
@@ -56,7 +63,7 @@ public class SettingsController : BaseV3Controller<Settings>
             var reverseResults = ExtractSortDirection(parameters.Sort);
 
             // Get settings using existing backend with V3 parameters
-            var settings = await _postgreSqlService.GetSettingsWithAdvancedFilterAsync(
+            var settings = await _settings.GetSettingsWithAdvancedFilterAsync(
                 count: parameters.Limit,
                 skip: parameters.Offset,
                 findQuery: findQuery,
@@ -111,6 +118,7 @@ public class SettingsController : BaseV3Controller<Settings>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Single settings record in V3 format</returns>
     [HttpGet("{id}")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/settings/{id}")]
     [ProducesResponseType(typeof(Settings), 200)]
     [ProducesResponseType(typeof(V3ErrorResponse), 404)]
@@ -131,7 +139,7 @@ public class SettingsController : BaseV3Controller<Settings>
         {
             // CHECKME: Should validate admin permissions here
 
-            var settings = await _postgreSqlService.GetSettingsByIdAsync(id, cancellationToken);
+            var settings = await _settings.GetSettingsByIdAsync(id, cancellationToken);
 
             if (settings == null)
             {
@@ -202,7 +210,7 @@ public class SettingsController : BaseV3Controller<Settings>
             }
 
             // Create settings records with deduplication support
-            var createdRecords = await _postgreSqlService.CreateSettingsAsync(
+            var createdRecords = await _settings.CreateSettingsAsync(
                 settingsRecords,
                 cancellationToken
             );
@@ -268,7 +276,7 @@ public class SettingsController : BaseV3Controller<Settings>
 
             ProcessSettingsForCreation(settings);
 
-            var updatedSettings = await _postgreSqlService.UpdateSettingsAsync(
+            var updatedSettings = await _settings.UpdateSettingsAsync(
                 id,
                 settings,
                 cancellationToken
@@ -327,7 +335,7 @@ public class SettingsController : BaseV3Controller<Settings>
         {
             // CHECKME: Should validate admin permissions here
 
-            var deleted = await _postgreSqlService.DeleteSettingsAsync(id, cancellationToken);
+            var deleted = await _settings.DeleteSettingsAsync(id, cancellationToken);
 
             if (!deleted)
             {
@@ -468,7 +476,7 @@ public class SettingsController : BaseV3Controller<Settings>
     {
         try
         {
-            return await _postgreSqlService.CountSettingsAsync(findQuery, cancellationToken);
+            return await _settings.CountSettingsAsync(findQuery, cancellationToken);
         }
         catch (Exception ex)
         {

@@ -5,13 +5,13 @@
   import {
     type TreatmentFood,
     type TreatmentFoodBreakdown,
-    type TreatmentFoodRequest,
+    type CarbIntakeFoodRequest,
   } from "$lib/api";
+  import { deleteCarbIntakeFood } from "$api/treatment-foods.remote";
   import {
-    addTreatmentFood,
-    deleteTreatmentFood,
-    getTreatmentFoodBreakdown,
-  } from "$lib/data/treatment-foods.remote";
+    addCarbIntakeFood,
+    getCarbIntakeFoods as getCarbIntakeFoodBreakdown,
+  } from "$api/generated/nutritions.generated.remote";
   import TreatmentFoodSelectorDialog from "./TreatmentFoodSelectorDialog.svelte";
   import TreatmentFoodEntryEditDialog from "./TreatmentFoodEntryEditDialog.svelte";
   import { CarbBreakdownBar, FoodEntryDetails } from "./index";
@@ -47,7 +47,7 @@
     isLoading = true;
     loadError = null;
     try {
-      breakdown = await getTreatmentFoodBreakdown(id);
+      breakdown = await getCarbIntakeFoodBreakdown(id);
     } catch (err) {
       console.error("Failed to load food breakdown:", err);
       loadError = "Unable to load food breakdown.";
@@ -56,10 +56,10 @@
     }
   }
 
-  async function handleAddFood(request: TreatmentFoodRequest) {
+  async function handleAddFood(request: CarbIntakeFoodRequest) {
     if (!treatmentId) return;
     try {
-      const updated = await addTreatmentFood({ treatmentId, request });
+      const updated = await addCarbIntakeFood({ id: treatmentId!, request });
       breakdown = updated;
       showAddFood = false;
     } catch (err) {
@@ -75,9 +75,9 @@
   async function handleDelete(entry: TreatmentFood) {
     if (!treatmentId || !entry.id) return;
     try {
-      await deleteTreatmentFood({
-        treatmentId,
-        entryId: entry.id,
+      await deleteCarbIntakeFood({
+        carbIntakeId: treatmentId!,
+        entryId: entry.id!,
       });
       // Reload the breakdown after deletion
       await loadBreakdown(treatmentId);
@@ -130,7 +130,7 @@
         <div
           class="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2"
         >
-          <span class="text-sm font-medium">Treatment Total</span>
+          <span class="text-sm font-medium">Total Carbs</span>
           <span class="text-lg font-bold tabular-nums">{totalCarbs}g</span>
         </div>
       {/if}

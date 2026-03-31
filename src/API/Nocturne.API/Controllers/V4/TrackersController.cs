@@ -2,12 +2,12 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Nocturne.API.Attributes;
+using OpenApi.Remote.Attributes;
 using Nocturne.API.Extensions;
 using Nocturne.API.Services;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Data.Entities;
-using Nocturne.Infrastructure.Data.Repositories;
+using Nocturne.Infrastructure.Data.Abstractions;
 
 namespace Nocturne.API.Controllers.V4;
 
@@ -19,12 +19,12 @@ namespace Nocturne.API.Controllers.V4;
 [Tags("V4 Trackers")]
 public class TrackersController : ControllerBase
 {
-    private readonly TrackerRepository _repository;
+    private readonly ITrackerRepository _repository;
     private readonly ISignalRBroadcastService _broadcast;
     private readonly ILogger<TrackersController> _logger;
 
     public TrackersController(
-        TrackerRepository repository,
+        ITrackerRepository repository,
         ISignalRBroadcastService broadcast,
         ILogger<TrackersController> logger
     )
@@ -156,7 +156,7 @@ public class TrackersController : ControllerBase
     /// </summary>
     [HttpPost("definitions")]
     [Authorize]
-    [RemoteCommand(Invalidates = ["GetDefinitions"])]
+    [RemoteForm(Invalidates = ["GetDefinitions"])]
     [ProducesResponseType(typeof(TrackerDefinitionDto), StatusCodes.Status201Created)]
     public async Task<ActionResult<TrackerDefinitionDto>> CreateDefinition(
         [FromBody] CreateTrackerDefinitionRequest request
@@ -174,7 +174,7 @@ public class TrackersController : ControllerBase
 
         // Validate mode-specific requirements
         if (request.Mode == TrackerMode.Event && request.LifespanHours.HasValue)
-            return BadRequest("Event mode trackers should not have a lifespan");
+            return Problem(detail: "Event mode trackers should not have a lifespan", statusCode: 400, title: "Bad Request");
 
         var entity = new TrackerDefinitionEntity
         {
@@ -239,7 +239,7 @@ public class TrackersController : ControllerBase
     /// </summary>
     [HttpPut("definitions/{id:guid}")]
     [Authorize]
-    [RemoteCommand(Invalidates = ["GetDefinitions", "GetDefinition"])]
+    [RemoteForm(Invalidates = ["GetDefinitions", "GetDefinition"])]
     [ProducesResponseType(typeof(TrackerDefinitionDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<TrackerDefinitionDto>> UpdateDefinition(
         Guid id,
@@ -266,7 +266,7 @@ public class TrackersController : ControllerBase
 
         // Validate mode-specific requirements
         if (mode == TrackerMode.Event && lifespan.HasValue)
-            return BadRequest("Event mode trackers should not have a lifespan");
+            return Problem(detail: "Event mode trackers should not have a lifespan", statusCode: 400, title: "Bad Request");
 
         existing.Name = request.Name ?? existing.Name;
         existing.Description = request.Description ?? existing.Description;
@@ -441,9 +441,9 @@ public class TrackersController : ControllerBase
 
         // Validate mode-specific requirements
         if (definition.Mode == TrackerMode.Event && !request.ScheduledAt.HasValue)
-            return BadRequest("Event mode trackers require a ScheduledAt datetime");
+            return Problem(detail: "Event mode trackers require a ScheduledAt datetime", statusCode: 400, title: "Bad Request");
         if (definition.Mode == TrackerMode.Duration && request.ScheduledAt.HasValue)
-            return BadRequest("Duration mode trackers should not have a ScheduledAt datetime");
+            return Problem(detail: "Duration mode trackers should not have a ScheduledAt datetime", statusCode: 400, title: "Bad Request");
 
         var instance = await _repository.StartInstanceAsync(
             request.DefinitionId,
@@ -491,7 +491,7 @@ public class TrackersController : ControllerBase
             return Forbid();
 
         if (existing.CompletedAt != null)
-            return BadRequest("Instance already completed");
+            return Problem(detail: "Instance already completed", statusCode: 400, title: "Bad Request");
 
         var completed = await _repository.CompleteInstanceAsync(
             id,

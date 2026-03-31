@@ -30,16 +30,16 @@ public class GlookoStateSpanMapper
 
         var series = graphData.Series;
 
+        // SuspendBasal -> PumpMode StateSpan only (BasalDelivery now handled by GlookoTempBasalMapper)
         if (series.SuspendBasal != null)
             foreach (var suspend in series.SuspendBasal)
             {
                 var startTimestamp = _timeMapper.GetCorrectedGlookoTime(suspend.X);
                 var durationSeconds = suspend.Duration ?? 0;
-                var startMills = new DateTimeOffset(startTimestamp).ToUnixTimeMilliseconds();
-                var endMills =
+                var endTimestamp =
                     durationSeconds > 0
-                        ? startMills + durationSeconds * 1000
-                        : (long?)null;
+                        ? startTimestamp.AddSeconds(durationSeconds)
+                        : (DateTime?)null;
 
                 stateSpans.Add(
                     new StateSpan
@@ -47,8 +47,8 @@ public class GlookoStateSpanMapper
                         OriginalId = $"glooko_suspend_{suspend.X}",
                         Category = StateSpanCategory.PumpMode,
                         State = PumpModeState.Suspended.ToString(),
-                        StartMills = startMills,
-                        EndMills = endMills,
+                        StartTimestamp = startTimestamp,
+                        EndTimestamp = endTimestamp,
                         Source = _connectorSource,
                         Metadata = new Dictionary<string, object>
                         {
@@ -57,36 +57,18 @@ public class GlookoStateSpanMapper
                         }
                     }
                 );
-
-                stateSpans.Add(
-                    new StateSpan
-                    {
-                        OriginalId = $"glooko_suspend_basal_{suspend.X}",
-                        Category = StateSpanCategory.BasalDelivery,
-                        State = BasalDeliveryState.Active.ToString(),
-                        StartMills = startMills,
-                        EndMills = endMills,
-                        Source = _connectorSource,
-                        Metadata = new Dictionary<string, object>
-                        {
-                            { "rate", 0.0 },
-                            { "origin", BasalDeliveryOrigin.Suspended.ToString() },
-                            { "durationSeconds", durationSeconds }
-                        }
-                    }
-                );
             }
 
+        // LgsPlgs -> PumpMode StateSpan only (BasalDelivery now handled by GlookoTempBasalMapper)
         if (series.LgsPlgs != null)
             foreach (var lgsEvent in series.LgsPlgs)
             {
                 var startTimestamp = _timeMapper.GetCorrectedGlookoTime(lgsEvent.X);
                 var durationSeconds = lgsEvent.Duration ?? 0;
-                var startMills = new DateTimeOffset(startTimestamp).ToUnixTimeMilliseconds();
-                var endMills =
+                var endTimestamp =
                     durationSeconds > 0
-                        ? startMills + durationSeconds * 1000
-                        : (long?)null;
+                        ? startTimestamp.AddSeconds(durationSeconds)
+                        : (DateTime?)null;
 
                 var stateValue = lgsEvent.EventType?.ToUpperInvariant() switch
                 {
@@ -102,8 +84,8 @@ public class GlookoStateSpanMapper
                         OriginalId = $"glooko_lgsplgs_{lgsEvent.X}",
                         Category = StateSpanCategory.PumpMode,
                         State = stateValue,
-                        StartMills = startMills,
-                        EndMills = endMills,
+                        StartTimestamp = startTimestamp,
+                        EndTimestamp = endTimestamp,
                         Source = _connectorSource,
                         Metadata = new Dictionary<string, object>
                         {
@@ -113,31 +95,9 @@ public class GlookoStateSpanMapper
                         }
                     }
                 );
-
-                var basalOrigin = lgsEvent.EventType?.ToUpperInvariant() == "SUSPEND"
-                    ? BasalDeliveryOrigin.Suspended
-                    : BasalDeliveryOrigin.Algorithm;
-
-                stateSpans.Add(
-                    new StateSpan
-                    {
-                        OriginalId = $"glooko_lgsplgs_basal_{lgsEvent.X}",
-                        Category = StateSpanCategory.BasalDelivery,
-                        State = BasalDeliveryState.Active.ToString(),
-                        StartMills = startMills,
-                        EndMills = endMills,
-                        Source = _connectorSource,
-                        Metadata = new Dictionary<string, object>
-                        {
-                            { "rate", 0.0 },
-                            { "origin", basalOrigin.ToString() },
-                            { "eventType", lgsEvent.EventType ?? "unknown" },
-                            { "durationSeconds", durationSeconds }
-                        }
-                    }
-                );
             }
 
+        // ProfileChange -> Profile StateSpan (unchanged)
         if (series.ProfileChange != null)
         {
             var profileChanges = series.ProfileChange.OrderBy(p => p.X).ToList();
@@ -146,11 +106,9 @@ public class GlookoStateSpanMapper
                 var change = profileChanges[i];
                 var startTimestamp = _timeMapper.GetCorrectedGlookoTime(change.X);
 
-                long? endMills = null;
+                DateTime? endTimestamp = null;
                 if (i < profileChanges.Count - 1)
-                    endMills = new DateTimeOffset(
-                        _timeMapper.GetCorrectedGlookoTime(profileChanges[i + 1].X)
-                    ).ToUnixTimeMilliseconds();
+                    endTimestamp = _timeMapper.GetCorrectedGlookoTime(profileChanges[i + 1].X);
 
                 stateSpans.Add(
                     new StateSpan
@@ -158,8 +116,8 @@ public class GlookoStateSpanMapper
                         OriginalId = $"glooko_profile_{change.X}",
                         Category = StateSpanCategory.Profile,
                         State = ProfileState.Active.ToString(),
-                        StartMills = new DateTimeOffset(startTimestamp).ToUnixTimeMilliseconds(),
-                        EndMills = endMills,
+                        StartTimestamp = startTimestamp,
+                        EndTimestamp = endTimestamp,
                         Source = _connectorSource,
                         Metadata = new Dictionary<string, object>
                         {
@@ -170,39 +128,8 @@ public class GlookoStateSpanMapper
             }
         }
 
-        if (series.TemporaryBasal != null)
-            foreach (var tempBasal in series.TemporaryBasal)
-            {
-                var startTimestamp = _timeMapper.GetCorrectedGlookoTime(tempBasal.X);
-                var durationSeconds = tempBasal.Duration ?? 0;
-                var startMills = new DateTimeOffset(startTimestamp).ToUnixTimeMilliseconds();
-                var endMills =
-                    durationSeconds > 0
-                        ? startMills + durationSeconds * 1000
-                        : (long?)null;
-
-                var rate = tempBasal.Y ?? 0;
-                var calculatedInsulin = rate * durationSeconds / 3600.0;
-
-                stateSpans.Add(
-                    new StateSpan
-                    {
-                        OriginalId = $"glooko_tempbasal_{tempBasal.X}",
-                        Category = StateSpanCategory.BasalDelivery,
-                        State = BasalDeliveryState.Active.ToString(),
-                        StartMills = startMills,
-                        EndMills = endMills,
-                        Source = _connectorSource,
-                        Metadata = new Dictionary<string, object>
-                        {
-                            { "rate", rate },
-                            { "origin", BasalDeliveryOrigin.Manual.ToString() },
-                            { "durationSeconds", durationSeconds },
-                            { "calculatedInsulin", calculatedInsulin }
-                        }
-                    }
-                );
-            }
+        // TemporaryBasal and ScheduledBasal BasalDelivery spans removed -
+        // now produced as TempBasal records by GlookoTempBasalMapper
 
         _logger.LogInformation(
             "[{ConnectorSource}] Transformed {Count} state spans from v3 data",
@@ -220,60 +147,35 @@ public class GlookoStateSpanMapper
         if (batchData == null)
             return stateSpans;
 
-        if (batchData.TempBasals != null)
-            foreach (var tempBasal in batchData.TempBasals)
-            {
-                var rawTimestamp = DateTime.Parse(
-                    tempBasal.Timestamp,
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.RoundtripKind
-                );
-                var startTimestamp = _timeMapper.GetCorrectedGlookoTime(rawTimestamp);
-                var durationSeconds = tempBasal.Duration;
-                var startMills = new DateTimeOffset(startTimestamp).ToUnixTimeMilliseconds();
-                var endMills =
-                    durationSeconds > 0
-                        ? startMills + durationSeconds * 1000
-                        : (long?)null;
+        // TempBasals and ScheduledBasals BasalDelivery spans removed -
+        // now produced as TempBasal records by GlookoTempBasalMapper
 
-                var rate = tempBasal.Rate;
-                var calculatedInsulin = rate * durationSeconds / 3600.0;
-
-                stateSpans.Add(
-                    new StateSpan
-                    {
-                        OriginalId = $"glooko_v2_tempbasal_{rawTimestamp.Ticks}",
-                        Category = StateSpanCategory.BasalDelivery,
-                        State = BasalDeliveryState.Active.ToString(),
-                        StartMills = startMills,
-                        EndMills = endMills,
-                        Source = _connectorSource,
-                        Metadata = new Dictionary<string, object>
-                        {
-                            { "rate", rate },
-                            { "origin", BasalDeliveryOrigin.Manual.ToString() },
-                            { "durationSeconds", durationSeconds },
-                            { "calculatedInsulin", calculatedInsulin }
-                        }
-                    }
-                );
-            }
-
+        // SuspendBasals -> PumpMode StateSpan only (BasalDelivery now handled by GlookoTempBasalMapper)
         if (batchData.SuspendBasals != null)
             foreach (var suspend in batchData.SuspendBasals)
             {
-                var rawTimestamp = DateTime.Parse(
-                    suspend.Timestamp,
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.RoundtripKind
-                );
+                if (string.IsNullOrWhiteSpace(suspend.Timestamp))
+                {
+                    _logger.LogWarning("Skipping SuspendBasal with empty timestamp");
+                    continue;
+                }
+
+                if (!DateTime.TryParse(
+                        suspend.Timestamp,
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind,
+                        out var rawTimestamp))
+                {
+                    _logger.LogWarning("Failed to parse SuspendBasal timestamp: '{Timestamp}'", suspend.Timestamp);
+                    continue;
+                }
+
                 var startTimestamp = _timeMapper.GetCorrectedGlookoTime(rawTimestamp);
                 var durationSeconds = suspend.Duration;
-                var startMills = new DateTimeOffset(startTimestamp).ToUnixTimeMilliseconds();
-                var endMills =
+                var endTimestamp =
                     durationSeconds > 0
-                        ? startMills + durationSeconds * 1000
-                        : (long?)null;
+                        ? startTimestamp.AddSeconds(durationSeconds)
+                        : (DateTime?)null;
 
                 stateSpans.Add(
                     new StateSpan
@@ -281,30 +183,11 @@ public class GlookoStateSpanMapper
                         OriginalId = $"glooko_v2_suspend_{rawTimestamp.Ticks}",
                         Category = StateSpanCategory.PumpMode,
                         State = PumpModeState.Suspended.ToString(),
-                        StartMills = startMills,
-                        EndMills = endMills,
+                        StartTimestamp = startTimestamp,
+                        EndTimestamp = endTimestamp,
                         Source = _connectorSource,
                         Metadata = new Dictionary<string, object>
                         {
-                            { "suspendReason", suspend.SuspendReason ?? "unknown" },
-                            { "durationSeconds", durationSeconds }
-                        }
-                    }
-                );
-
-                stateSpans.Add(
-                    new StateSpan
-                    {
-                        OriginalId = $"glooko_v2_suspend_basal_{rawTimestamp.Ticks}",
-                        Category = StateSpanCategory.BasalDelivery,
-                        State = BasalDeliveryState.Active.ToString(),
-                        StartMills = startMills,
-                        EndMills = endMills,
-                        Source = _connectorSource,
-                        Metadata = new Dictionary<string, object>
-                        {
-                            { "rate", 0.0 },
-                            { "origin", BasalDeliveryOrigin.Suspended.ToString() },
                             { "suspendReason", suspend.SuspendReason ?? "unknown" },
                             { "durationSeconds", durationSeconds }
                         }
@@ -313,10 +196,9 @@ public class GlookoStateSpanMapper
             }
 
         _logger.LogInformation(
-            "[{ConnectorSource}] Transformed {Count} state spans from v2 data (TempBasals={TempBasalCount}, Suspends={SuspendCount})",
+            "[{ConnectorSource}] Transformed {Count} state spans from v2 data (Suspends={SuspendCount})",
             _connectorSource,
             stateSpans.Count,
-            batchData.TempBasals?.Length ?? 0,
             batchData.SuspendBasals?.Length ?? 0
         );
 

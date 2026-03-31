@@ -7,7 +7,7 @@ using SameSiteMode = Nocturne.Core.Models.Configuration.SameSiteMode;
 namespace Nocturne.API.Middleware.Handlers;
 
 /// <summary>
-/// Authentication handler for session cookies set by OidcController or LocalAuthController.
+/// Authentication handler for session cookies set by OidcController or PasskeyController.
 /// Validates the access token JWT stored in the session cookie.
 /// Falls back to refresh token if access token is expired.
 /// </summary>
@@ -27,7 +27,6 @@ public class SessionCookieHandler : IAuthHandler
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<SessionCookieHandler> _logger;
     private readonly OidcOptions _options;
-    private readonly LocalIdentityOptions _localIdentityOptions;
 
     /// <summary>
     /// Creates a new instance of SessionCookieHandler
@@ -35,35 +34,30 @@ public class SessionCookieHandler : IAuthHandler
     public SessionCookieHandler(
         IServiceScopeFactory scopeFactory,
         ILogger<SessionCookieHandler> logger,
-        IOptions<OidcOptions> options,
-        IOptions<LocalIdentityOptions> localIdentityOptions
+        IOptions<OidcOptions> options
     )
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _options = options.Value;
-        _localIdentityOptions = localIdentityOptions.Value;
     }
 
     /// <inheritdoc />
     public async Task<AuthResult> AuthenticateAsync(HttpContext context)
     {
-        // Skip if neither OIDC nor LocalIdentity is enabled
-        if (!_options.Enabled && !_localIdentityOptions.Enabled)
+        // Skip if OIDC is not enabled
+        if (!_options.Enabled)
         {
-            _logger.LogInformation("[SessionCookieHandler] Both OIDC and LocalIdentity are disabled, skipping");
+            _logger.LogInformation(
+                "[SessionCookieHandler] OIDC is disabled, skipping"
+            );
             return AuthResult.Skip();
         }
 
         // Check for access token in session cookie
         var accessToken = context.Request.Cookies[_options.Cookie.AccessTokenName];
-        _logger.LogInformation("[SessionCookieHandler] Looking for cookie '{CookieName}': {Found}",
-            _options.Cookie.AccessTokenName,
-            !string.IsNullOrEmpty(accessToken) ? "Found (" + accessToken.Length + " chars)" : "NOT FOUND");
-
         // Log all cookies received for debugging
         var allCookies = context.Request.Cookies.Keys;
-        _logger.LogInformation("[SessionCookieHandler] All cookies received: {Cookies}", string.Join(", ", allCookies));
 
         using var scope = _scopeFactory.CreateScope();
 
@@ -76,7 +70,6 @@ public class SessionCookieHandler : IAuthHandler
 
             if (validationResult.IsValid && validationResult.Claims != null)
             {
-
                 return AuthResult.Success(
                     BuildAuthContextFromClaims(validationResult.Claims, accessToken)
                 );
@@ -93,8 +86,10 @@ public class SessionCookieHandler : IAuthHandler
 
             // Only clear cookies if we had an access token but refresh failed
             // This indicates a definitive auth failure, not just "skip to next handler"
-            _logger.LogDebug("Access token validation failed ({Error}) and refresh failed, clearing session cookies",
-                validationResult.ErrorCode);
+            _logger.LogDebug(
+                "Access token validation failed ({Error}) and refresh failed, clearing session cookies",
+                validationResult.ErrorCode
+            );
             ClearSessionCookies(context);
             return AuthResult.Skip();
         }
@@ -110,7 +105,9 @@ public class SessionCookieHandler : IAuthHandler
             }
 
             // Had refresh token but it failed - clear cookies and skip
-            _logger.LogDebug("No access token and refresh token validation failed, clearing session cookies");
+            _logger.LogDebug(
+                "No access token and refresh token validation failed, clearing session cookies"
+            );
             ClearSessionCookies(context);
         }
         // No cookies at all - just skip to next handler without clearing anything
@@ -157,7 +154,6 @@ public class SessionCookieHandler : IAuthHandler
 
             if (validationResult.IsValid && validationResult.Claims != null)
             {
-
                 return AuthResult.Success(
                     BuildAuthContextFromClaims(validationResult.Claims, newTokens.AccessToken)
                 );
@@ -187,6 +183,7 @@ public class SessionCookieHandler : IAuthHandler
             Permissions = claims.Permissions,
             RawToken = token,
             ExpiresAt = claims.ExpiresAt,
+            LimitTo24Hours = claims.LimitTo24Hours,
         };
     }
 
@@ -273,9 +270,7 @@ public class SessionCookieHandler : IAuthHandler
     /// <summary>
     /// Map SameSite mode
     /// </summary>
-    private static Microsoft.AspNetCore.Http.SameSiteMode MapSameSiteMode(
-        SameSiteMode mode
-    )
+    private static Microsoft.AspNetCore.Http.SameSiteMode MapSameSiteMode(SameSiteMode mode)
     {
         return mode switch
         {

@@ -2,21 +2,19 @@
   import * as Card from "$lib/components/ui/card";
   import { Badge } from "$lib/components/ui/badge";
   import type { TreatmentSummary } from "$lib/api";
-  import type { TreatmentCounts } from "$lib/constants/treatment-categories";
+  import type { EntryCategoryId } from "$lib/constants/entry-categories";
+  import { ENTRY_CATEGORIES } from "$lib/constants/entry-categories";
   import { Activity } from "lucide-svelte";
   import { BolusIcon, CarbsIcon } from "$lib/components/icons";
 
   interface Props {
-    /** Backend-calculated treatment summary with accurate insulin/carb totals */
     treatmentSummary: TreatmentSummary;
-    /** Frontend-counted category/event type breakdowns for UI display */
-    counts: TreatmentCounts;
+    counts: Record<EntryCategoryId | "all", number>;
     dateRange: { from: string; to: string };
   }
 
   let { treatmentSummary, counts, dateRange }: Props = $props();
 
-  // Calculate days in range
   let daysInRange = $derived.by(() => {
     const from = new Date(dateRange.from);
     const to = new Date(dateRange.to);
@@ -31,41 +29,30 @@
       (treatmentSummary.totals?.insulin?.basal ?? 0)
   );
   const totalCarbs = $derived(treatmentSummary.totals?.food?.carbs ?? 0);
-  const bolusCount = $derived(counts.byCategoryCount.bolus);
-  const carbEntriesCount = $derived(
-    counts.byCategoryCount.carbs + counts.byCategoryCount.bolus
-  );
+  const bolusCount = $derived(counts.bolus);
+  const carbEntriesCount = $derived(counts.carbs);
 
-  // Calculate daily averages
   let dailyAvgCarbs = $derived(totalCarbs / daysInRange);
   let dailyAvgBoluses = $derived(bolusCount / daysInRange);
 
-  // Average per entry
   let avgInsulinPerBolus = $derived(
     bolusCount > 0 ? totalInsulin / bolusCount : 0
   );
   let avgCarbsPerEntry = $derived(
     carbEntriesCount > 0 ? totalCarbs / carbEntriesCount : 0
   );
-
-  // Get top event types (sorted by count)
-  let topEventTypes = $derived(
-    Object.entries(counts.byEventTypeCount)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-  );
 </script>
 
 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-  <!-- Total Treatments -->
+  <!-- Total Records -->
   <Card.Root class="bg-card">
     <Card.Content class="p-4">
       <div class="flex items-center justify-between">
         <div>
           <p class="text-sm font-medium text-muted-foreground">
-            Total Treatments
+            Total Records
           </p>
-          <p class="text-2xl font-bold tabular-nums">{counts.total}</p>
+          <p class="text-2xl font-bold tabular-nums">{counts.all}</p>
         </div>
         <div
           class="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center"
@@ -74,17 +61,18 @@
         </div>
       </div>
       <div class="mt-2 flex flex-wrap gap-1">
-        {#each topEventTypes as [eventType, count]}
-          <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
-            {eventType}
-            <span class="opacity-70">{count}</span>
-          </Badge>
+        {#each Object.entries(ENTRY_CATEGORIES) as [id, cat]}
+          {#if counts[id as EntryCategoryId] > 0}
+            <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
+              {cat.name} <span class="opacity-70">{counts[id as EntryCategoryId]}</span>
+            </Badge>
+          {/if}
         {/each}
       </div>
     </Card.Content>
   </Card.Root>
 
-  <!-- Insulin (merged with Boluses) -->
+  <!-- Insulin -->
   <Card.Root class="bg-card">
     <Card.Content class="p-4">
       <div class="flex items-center justify-between">
@@ -114,7 +102,7 @@
     </Card.Content>
   </Card.Root>
 
-  <!-- Carbs (merged with Meals) -->
+  <!-- Carbs -->
   <Card.Root class="bg-card">
     <Card.Content class="p-4">
       <div class="flex items-center justify-between">

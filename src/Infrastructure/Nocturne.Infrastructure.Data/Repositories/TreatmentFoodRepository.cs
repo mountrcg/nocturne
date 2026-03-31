@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Nocturne.Core.Contracts.Repositories;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Data.Entities;
 using Nocturne.Infrastructure.Data.Mappers;
@@ -6,9 +7,9 @@ using Nocturne.Infrastructure.Data.Mappers;
 namespace Nocturne.Infrastructure.Data.Repositories;
 
 /// <summary>
-/// PostgreSQL repository for treatment food breakdown operations.
+/// PostgreSQL repository for food breakdown operations linked to carb intake records.
 /// </summary>
-public class TreatmentFoodRepository
+public class TreatmentFoodRepository : ITreatmentFoodRepository
 {
     private readonly NocturneDbContext _context;
 
@@ -22,10 +23,13 @@ public class TreatmentFoodRepository
     }
 
     /// <summary>
-    /// Get food breakdown entries for a treatment.
+    /// Get food breakdown entries for a carb intake record.
     /// </summary>
-    public async Task<IReadOnlyList<TreatmentFood>> GetByTreatmentIdAsync(
-        Guid treatmentId,
+    /// <param name="carbIntakeId">The unique identifier of the carb intake record.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of food breakdown entries.</returns>
+    public async Task<IReadOnlyList<TreatmentFood>> GetByCarbIntakeIdAsync(
+        Guid carbIntakeId,
         CancellationToken cancellationToken = default
     )
     {
@@ -33,7 +37,7 @@ public class TreatmentFoodRepository
             .Set<TreatmentFoodEntity>()
             .AsNoTracking()
             .Include(tf => tf.Food)
-            .Where(tf => tf.TreatmentId == treatmentId)
+            .Where(tf => tf.CarbIntakeId == carbIntakeId)
             .OrderBy(tf => tf.SysCreatedAt)
             .ToListAsync(cancellationToken);
 
@@ -43,14 +47,17 @@ public class TreatmentFoodRepository
     }
 
     /// <summary>
-    /// Get food breakdown entries for multiple treatments.
+    /// Get food breakdown entries for multiple carb intake records.
     /// </summary>
-    public async Task<IReadOnlyList<TreatmentFood>> GetByTreatmentIdsAsync(
-        IEnumerable<Guid> treatmentIds,
+    /// <param name="carbIntakeIds">A collection of carb intake record identifiers.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of food breakdown entries matching the IDs.</returns>
+    public async Task<IReadOnlyList<TreatmentFood>> GetByCarbIntakeIdsAsync(
+        IEnumerable<Guid> carbIntakeIds,
         CancellationToken cancellationToken = default
     )
     {
-        var ids = treatmentIds.ToList();
+        var ids = carbIntakeIds.ToList();
         if (ids.Count == 0)
         {
             return Array.Empty<TreatmentFood>();
@@ -60,7 +67,7 @@ public class TreatmentFoodRepository
             .Set<TreatmentFoodEntity>()
             .AsNoTracking()
             .Include(tf => tf.Food)
-            .Where(tf => ids.Contains(tf.TreatmentId))
+            .Where(tf => ids.Contains(tf.CarbIntakeId))
             .OrderBy(tf => tf.SysCreatedAt)
             .ToListAsync(cancellationToken);
 
@@ -70,8 +77,11 @@ public class TreatmentFoodRepository
     }
 
     /// <summary>
-    /// Create a treatment food entry.
+    /// Create a food breakdown entry.
     /// </summary>
+    /// <param name="entry">The food breakdown entry to create.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The created food breakdown entry.</returns>
     public async Task<TreatmentFood> CreateAsync(
         TreatmentFood entry,
         CancellationToken cancellationToken = default
@@ -91,8 +101,11 @@ public class TreatmentFoodRepository
     }
 
     /// <summary>
-    /// Update a treatment food entry.
+    /// Update a food breakdown entry.
     /// </summary>
+    /// <param name="entry">The food breakdown entry with updated data.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The updated food breakdown entry, or null if not found.</returns>
     public async Task<TreatmentFood?> UpdateAsync(
         TreatmentFood entry,
         CancellationToken cancellationToken = default
@@ -120,8 +133,11 @@ public class TreatmentFoodRepository
     }
 
     /// <summary>
-    /// Delete a treatment food entry.
+    /// Delete a food breakdown entry.
     /// </summary>
+    /// <param name="id">The unique identifier of the entry to delete.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True if the entry was deleted, otherwise false.</returns>
     public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var entity = await _context
@@ -139,30 +155,91 @@ public class TreatmentFoodRepository
     }
 
     /// <summary>
+    /// Count how many food attribution entries reference a specific food.
+    /// </summary>
+    /// <param name="foodId">The food unique identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The total number of referencing entries.</returns>
+    public async Task<int> CountByFoodIdAsync(
+        Guid foodId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return await _context
+            .Set<TreatmentFoodEntity>()
+            .AsNoTracking()
+            .CountAsync(tf => tf.FoodId == foodId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Clear food references for a specific food (set FoodId to null), keeping the attribution entries as "Other".
+    /// </summary>
+    /// <param name="foodId">The food unique identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of records updated.</returns>
+    public async Task<int> ClearFoodReferencesByFoodIdAsync(
+        Guid foodId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return await _context
+            .Set<TreatmentFoodEntity>()
+            .Where(tf => tf.FoodId == foodId)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(tf => tf.FoodId, (Guid?)null),
+                cancellationToken
+            );
+    }
+
+    /// <summary>
+    /// Delete all food attribution entries that reference a specific food.
+    /// </summary>
+    /// <param name="foodId">The food unique identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of records deleted.</returns>
+    public async Task<int> DeleteByFoodIdAsync(
+        Guid foodId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return await _context
+            .Set<TreatmentFoodEntity>()
+            .Where(tf => tf.FoodId == foodId)
+            .ExecuteDeleteAsync(cancellationToken);
+    }
+
+    /// <summary>
     /// Get recently used foods ordered by last usage.
     /// </summary>
-    public async Task<IReadOnlyList<FoodEntity>> GetRecentFoodsAsync(
+    /// <param name="limit">The maximum number of foods to return.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of recently used foods.</returns>
+    public async Task<IReadOnlyList<Food>> GetRecentFoodsAsync(
         int limit,
         CancellationToken cancellationToken = default
     )
     {
-        var recentFoods = await _context
+        var recentFoodIds = await _context
             .Set<TreatmentFoodEntity>()
             .AsNoTracking()
             .Where(tf => tf.FoodId != null)
-            .Join(
-                _context.Foods.AsNoTracking(),
-                tf => tf.FoodId,
-                f => f.Id,
-                (tf, f) => new { tf, f }
-            )
-            .GroupBy(x => x.f.Id)
-            .Select(g => new { Food = g.First().f, LastUsed = g.Max(x => x.tf.SysCreatedAt) })
+            .GroupBy(tf => tf.FoodId)
+            .Select(g => new { FoodId = g.Key!.Value, LastUsed = g.Max(tf => tf.SysCreatedAt) })
             .OrderByDescending(x => x.LastUsed)
             .Take(limit)
-            .Select(x => x.Food)
             .ToListAsync(cancellationToken);
 
-        return recentFoods;
+        var ids = recentFoodIds.Select(x => x.FoodId).ToList();
+
+        var foods = await _context.Foods
+            .AsNoTracking()
+            .Where(f => ids.Contains(f.Id))
+            .ToListAsync(cancellationToken);
+
+        var foodLookup = foods.ToDictionary(f => f.Id);
+        return recentFoodIds
+            .Where(x => foodLookup.ContainsKey(x.FoodId))
+            .Select(x => FoodMapper.ToDomainModel(foodLookup[x.FoodId]))
+            .ToList();
     }
 }

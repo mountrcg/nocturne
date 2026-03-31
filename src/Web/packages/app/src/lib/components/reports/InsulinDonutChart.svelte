@@ -1,101 +1,114 @@
 <script lang="ts">
-  import { Text, PieChart } from "layerchart";
-  import type { Treatment } from "$lib/api";
-  import { TreatmentEditDialog } from "$lib/components/treatments";
+  import { PieChart, Text, Tooltip } from "layerchart";
+  import type { Bolus, CarbIntake } from "$lib/api";
 
   interface Props {
-    treatments: Treatment[];
-    basal: number;
-    href?: string;
+    boluses: Bolus[];
+    scheduledBasal: number;
+    additionalBasal: number;
+    carbIntakes?: CarbIntake[];
+    onBolusClick?: (bolus: Bolus) => void;
   }
 
-  let { treatments, basal }: Props = $props();
-
-  // Dialog state
-  let selectedTreatment = $state<Treatment | null>(null);
-  let editDialogOpen = $state(false);
-
-  // Colors - generate shades of blue for individual boluses
-  const BASAL_COLOR = "hsl(38, 92%, 50%)"; // Amber for basal
+  let {
+    boluses,
+    scheduledBasal,
+    additionalBasal,
+    carbIntakes = [],
+    onBolusClick,
+  }: Props = $props();
 
   function getBolusColor(index: number, total: number): string {
-    const baseHue = 217;
-    const baseSat = 91;
-    const lightness = 45 + (index / Math.max(1, total - 1)) * 20;
-    return `hsl(${baseHue}, ${baseSat}%, ${lightness}%)`;
+    const mixPercent = Math.round(
+      (index / Math.max(1, total - 1)) * 40
+    );
+    return `color-mix(in oklch, var(--insulin-bolus), white ${mixPercent}%)`;
   }
 
-  // Get bolus treatments only
+  // Get boluses with insulin
   const bolusTreatments = $derived(
-    treatments.filter((t) => (t.insulin ?? 0) > 0)
+    boluses.filter((t) => (t.insulin ?? 0) > 0)
   );
 
-  // Create segment data
+  // Build correlation map for tooltip (bolus correlationId -> carb intake)
+  const carbByCorrelation = $derived.by(() => {
+    const map = new Map<string, CarbIntake>();
+    for (const c of carbIntakes) {
+      if (c.correlationId) map.set(c.correlationId, c);
+    }
+    return map;
+  });
+
+  // Segment data for the pie chart
   interface SegmentData {
     key: string;
+    label: string;
     value: number;
     color: string;
-    treatment?: Treatment;
-    startAngle: number;
-    endAngle: number;
+    bolus?: Bolus;
+    linkedCarbs?: number;
+    time?: string;
   }
 
   const segmentData = $derived.by(() => {
     const segments: SegmentData[] = [];
-    let currentAngle = 0;
 
-    // Calculate total for angles
-    const totalValue =
-      bolusTreatments.reduce((sum, t) => sum + (t.insulin ?? 0), 0) + basal;
-    if (totalValue === 0) return segments;
-
-    // Add individual bolus segments
     bolusTreatments.forEach((t, i) => {
-      const value = t.insulin ?? 0;
-      const angleSize = (value / totalValue) * Math.PI * 2;
+      const linkedCarb = t.correlationId
+        ? carbByCorrelation.get(t.correlationId)
+        : undefined;
+
+      const time = t.mills
+        ? new Date(t.mills).toLocaleTimeString(undefined, {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : undefined;
+
       segments.push({
-        key: "Bolus",
-        value,
+        key: `bolus-${i}`,
+        label: `Bolus${time ? ` @ ${time}` : ""}`,
+        value: t.insulin ?? 0,
         color: getBolusColor(i, bolusTreatments.length),
-        treatment: t,
-        startAngle: currentAngle,
-        endAngle: currentAngle + angleSize,
+        bolus: t,
+        linkedCarbs: linkedCarb?.carbs ?? undefined,
+        time,
       });
-      currentAngle += angleSize;
     });
 
-    // Add basal as a single segment
-    if (basal > 0) {
-      const angleSize = (basal / totalValue) * Math.PI * 2;
+    if (scheduledBasal > 0) {
       segments.push({
-        key: "Basal",
-        value: basal,
-        color: BASAL_COLOR,
-        startAngle: currentAngle,
-        endAngle: currentAngle + angleSize,
+        key: "scheduled-basal",
+        label: "Scheduled Basal",
+        value: scheduledBasal,
+        color: "var(--insulin-scheduled-basal)",
+      });
+    }
+
+    if (additionalBasal > 0) {
+      segments.push({
+        key: "additional-basal",
+        label: "Additional Basal",
+        value: additionalBasal,
+        color: "var(--insulin-additional-basal)",
       });
     }
 
     return segments;
   });
 
-  // Calculate total
   const totalBolus = $derived(
     bolusTreatments.reduce((sum, t) => sum + (t.insulin ?? 0), 0)
   );
-  const total = $derived(totalBolus + basal);
+  const total = $derived(totalBolus + scheduledBasal + additionalBasal);
 
-  // Handle treatment dialog close
-  function handleDialogClose() {
-    editDialogOpen = false;
-    selectedTreatment = null;
-  }
-
-  // Handle treatment save (placeholder)
-  function handleTreatmentSave(updatedTreatment: Treatment) {
-    console.log("Saving treatment:", updatedTreatment);
-    editDialogOpen = false;
-    selectedTreatment = null;
+  function handleArcClick(
+    _e: MouseEvent,
+    detail: { data: SegmentData }
+  ) {
+    if (detail.data.bolus && onBolusClick) {
+      onBolusClick(detail.data.bolus);
+    }
   }
 </script>
 
@@ -106,27 +119,57 @@
         data={segmentData}
         key="key"
         value="value"
-        cRange={["var(--iob-basal)", "var(--iob-bolus)"]}
+        c="key"
+        cRange={segmentData.map((s) => s.color)}
         innerRadius={-30}
         cornerRadius={3}
         padAngle={0.02}
         renderContext={"svg"}
+        onArcClick={handleArcClick}
+        props={{
+          arc: {
+            class: "transition-opacity",
+          },
+        }}
       >
         {#snippet aboveMarks()}
           <Text
-            value={`Total: `}
+            value="Total:"
             textAnchor="middle"
             verticalAnchor="middle"
             dy={-8}
-            class="fill-muted-foreground tabular-nums"
+            class="fill-muted-foreground tabular-nums text-xs"
           />
           <Text
             value={`${total.toFixed(1)}U`}
             textAnchor="middle"
             verticalAnchor="middle"
-            dy={16}
-            class="fill-muted-foreground tabular-nums"
+            dy={10}
+            class="fill-muted-foreground tabular-nums text-sm font-medium"
           />
+        {/snippet}
+        {#snippet tooltip(snippetProps)}
+          <Tooltip.Root context={snippetProps.context}>
+            {#snippet children({ data })}
+              {@const d = data as SegmentData}
+              <div class="space-y-1 text-sm">
+                <div class="font-semibold">{d.label}</div>
+                <div class="tabular-nums">{d.value.toFixed(2)}U</div>
+                {#if d.linkedCarbs}
+                  <div class="text-muted-foreground tabular-nums">
+                    {d.linkedCarbs}g carbs
+                  </div>
+                {/if}
+                {#if d.bolus}
+                  <div
+                    class="text-xs text-muted-foreground border-t border-border pt-1 mt-1"
+                  >
+                    Click to view
+                  </div>
+                {/if}
+              </div>
+            {/snippet}
+          </Tooltip.Root>
         {/snippet}
       </PieChart>
     </div>
@@ -136,11 +179,3 @@
     </div>
   {/if}
 </div>
-
-<!-- Treatment Edit Dialog -->
-<TreatmentEditDialog
-  bind:open={editDialogOpen}
-  treatment={selectedTreatment}
-  onClose={handleDialogClose}
-  onSave={handleTreatmentSave}
-/>

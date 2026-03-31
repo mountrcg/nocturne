@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { AreaChart, Rule } from "layerchart";
+  import { AreaChart, Rule, Legend } from "layerchart";
+  import { scaleOrdinal } from "d3-scale";
   import SiteChangeIcon from "$lib/components/icons/SiteChangeIcon.svelte";
   import { AlertCircle } from "lucide-svelte";
   import type { SiteChangeImpactAnalysis } from "$lib/api";
@@ -83,6 +84,20 @@
       return [-720, 1440];
     return [-analysis.hoursBeforeChange * 60, analysis.hoursAfterChange * 60];
   });
+
+  const legendScale = scaleOrdinal<string, string>()
+    .domain([
+      "10th-25th / 75th-90th percentile",
+      "25th-75th percentile",
+      "Median glucose",
+      "Target range (70-180)",
+    ])
+    .range([
+      "var(--percentile-outer)",
+      "var(--percentile-inner)",
+      "var(--percentile-median)",
+      "transparent",
+    ]);
 </script>
 
 <div class="w-full">
@@ -102,7 +117,7 @@
               (d: SiteChangeImpactDataPointValid) => d.percentile25,
               (d: SiteChangeImpactDataPointValid) => d.percentile10,
             ],
-            color: "hsl(var(--chart-1) / 0.3)",
+            color: "var(--percentile-outer)",
             label: "10th-25th",
           },
           {
@@ -111,7 +126,7 @@
               (d: SiteChangeImpactDataPointValid) => d.medianGlucose,
               (d: SiteChangeImpactDataPointValid) => d.percentile25,
             ],
-            color: "hsl(var(--chart-2) / 0.5)",
+            color: "var(--percentile-inner)",
             label: "25th-Median",
           },
           {
@@ -120,7 +135,7 @@
               (d: SiteChangeImpactDataPointValid) => d.medianGlucose,
               (d: SiteChangeImpactDataPointValid) => d.medianGlucose,
             ],
-            color: "hsl(var(--primary))",
+            color: "var(--percentile-median)",
             props: {
               line: { strokeWidth: 2 },
             },
@@ -132,7 +147,7 @@
               (d: SiteChangeImpactDataPointValid) => d.medianGlucose,
               (d: SiteChangeImpactDataPointValid) => d.percentile75,
             ],
-            color: "hsl(var(--chart-3) / 0.5)",
+            color: "var(--percentile-inner)",
             label: "Median-75th",
           },
           {
@@ -141,7 +156,7 @@
               (d: SiteChangeImpactDataPointValid) => d.percentile75,
               (d: SiteChangeImpactDataPointValid) => d.percentile90,
             ],
-            color: "hsl(var(--chart-4) / 0.3)",
+            color: "var(--percentile-outer)",
             label: "75th-90th",
           },
         ]}
@@ -171,37 +186,16 @@
       </AreaChart>
     </div>
 
-    <!-- Legend explanation -->
-    <div
-      class="mt-4 flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground"
-    >
-      <div class="flex items-center gap-1.5">
-        <div
-          class="h-3 w-3 rounded-sm opacity-50"
-          style="background-color: hsl(var(--chart-1))"
-        ></div>
-        <span>10th-25th / 75th-90th percentile</span>
-      </div>
-      <div class="flex items-center gap-1.5">
-        <div
-          class="h-3 w-3 rounded-sm opacity-70"
-          style="background-color: hsl(var(--chart-2))"
-        ></div>
-        <span>25th-75th percentile</span>
-      </div>
-      <div class="flex items-center gap-1.5">
-        <div
-          class="h-0.5 w-4 rounded"
-          style="background-color: hsl(var(--primary))"
-        ></div>
-        <span>Median glucose</span>
-      </div>
-      <div class="flex items-center gap-1.5">
-        <div
-          class="h-0.5 w-4 rounded border border-dashed border-success/50"
-        ></div>
-        <span>Target range (70-180)</span>
-      </div>
+    <!-- Legend -->
+    <div class="mt-4 flex justify-center">
+      <Legend
+        scale={legendScale}
+        variant="swatches"
+        classes={{
+          label: "text-xs text-muted-foreground",
+          swatch: "rounded-sm",
+        }}
+      />
     </div>
 
     <!-- Summary Statistics -->

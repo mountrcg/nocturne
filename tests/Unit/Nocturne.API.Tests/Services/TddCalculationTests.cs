@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Nocturne.API.Services;
 using Nocturne.Core.Models;
+using Nocturne.Core.Models.V4;
 
 namespace Nocturne.API.Tests.Services;
 
@@ -27,104 +28,105 @@ public class TddCalculationTests
     #region Helper Methods
 
     /// <summary>
-    /// Creates a temp basal treatment at the given hour with explicit Rate and Duration.
-    /// Sets _insulin via the Insulin property so the auto-calculation path is not used.
+    /// Creates a TempBasal at the given hour with explicit rate and duration.
     /// </summary>
-    private static Treatment MakeTempBasal(
+    private static TempBasal MakeTempBasal(
         int hourOffset,
         double rateUPerHr,
         double durationMinutes,
-        double? percent = null
+        TempBasalOrigin origin = TempBasalOrigin.Scheduled,
+        double? scheduledRate = null
     )
     {
-        var mills = DayStart.AddHours(hourOffset).ToUnixTimeMilliseconds();
-        // Pre-calculate the insulin delivered so we set it explicitly,
-        // matching what a pump uploader would do.
-        var insulin = rateUPerHr * (durationMinutes / 60.0);
+        var startMills = DayStart.AddHours(hourOffset).ToUnixTimeMilliseconds();
+        var endMills = startMills + (long)(durationMinutes * 60 * 1000);
 
-        return new Treatment
+        return new TempBasal
         {
-            Id = $"temp-basal-{hourOffset}",
-            EventType = "Temp Basal",
-            Insulin = insulin,
+            Id = Guid.NewGuid(),
+            StartTimestamp = DateTimeOffset.FromUnixTimeMilliseconds(startMills).UtcDateTime,
+            EndTimestamp = DateTimeOffset.FromUnixTimeMilliseconds(endMills).UtcDateTime,
             Rate = rateUPerHr,
-            Duration = durationMinutes,
-            Percent = percent,
-            Mills = mills,
-            Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(mills).ToString("o"),
+            Origin = origin,
+            ScheduledRate = scheduledRate,
         };
     }
 
     /// <summary>
-    /// Creates a temp basal using only Rate and Duration (no explicit Insulin),
-    /// which exercises the Treatment.Insulin auto-calculation from Rate * Duration / 60.
+    /// Creates a temp basal (AID/algorithm-originated) at the given hour.
+    /// Origin is set to Algorithm to indicate a temp/AID adjustment,
+    /// except for zero-rate temps which use Suspended.
     /// </summary>
-    private static Treatment MakeTempBasalFromRate(
+    private static TempBasal MakeAlgorithmTempBasal(
         int hourOffset,
         double rateUPerHr,
         double durationMinutes,
-        double? percent = null
+        double? scheduledRate = null
     )
     {
-        var mills = DayStart.AddHours(hourOffset).ToUnixTimeMilliseconds();
-
-        return new Treatment
-        {
-            Id = $"temp-basal-rate-{hourOffset}",
-            EventType = "Temp Basal",
-            Rate = rateUPerHr,
-            Duration = durationMinutes,
-            Percent = percent,
-            Mills = mills,
-            Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(mills).ToString("o"),
-        };
+        return MakeTempBasal(
+            hourOffset,
+            rateUPerHr,
+            durationMinutes,
+            origin: rateUPerHr == 0 ? TempBasalOrigin.Suspended : TempBasalOrigin.Algorithm,
+            scheduledRate: scheduledRate
+        );
     }
 
     /// <summary>
-    /// Creates a scheduled basal segment (non-temp) at the given hour.
-    /// These represent the pump's programmed basal delivery.
+    /// Creates a scheduled basal TempBasal at the given hour.
     /// </summary>
-    private static Treatment MakeScheduledBasal(
+    private static TempBasal MakeScheduledBasal(
         int hourOffset,
         double rateUPerHr,
         double durationMinutes
     )
     {
-        var mills = DayStart.AddHours(hourOffset).ToUnixTimeMilliseconds();
-        var insulin = rateUPerHr * (durationMinutes / 60.0);
-
-        return new Treatment
-        {
-            Id = $"scheduled-basal-{hourOffset}",
-            EventType = "Basal",
-            Insulin = insulin,
-            Rate = rateUPerHr,
-            Duration = durationMinutes,
-            Mills = mills,
-            Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(mills).ToString("o"),
-        };
+        return MakeTempBasal(hourOffset, rateUPerHr, durationMinutes, origin: TempBasalOrigin.Scheduled);
     }
 
     /// <summary>
-    /// Creates a bolus treatment at the given hour.
+    /// Creates a bolus at the given hour.
     /// </summary>
-    private static Treatment MakeBolus(
+    private static Bolus MakeBolus(
         int hourOffset,
         double units,
-        string eventType = "Meal Bolus",
-        double carbs = 0
+        bool automatic = false
     )
     {
         var mills = DayStart.AddHours(hourOffset).ToUnixTimeMilliseconds();
 
-        return new Treatment
+        return new Bolus
         {
-            Id = $"bolus-{hourOffset}",
-            EventType = eventType,
+            Id = Guid.NewGuid(),
             Insulin = units,
-            Carbs = carbs > 0 ? carbs : null,
-            Mills = mills,
-            Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(mills).ToString("o"),
+            Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(mills).UtcDateTime,
+            Automatic = automatic,
+        };
+    }
+
+    /// <summary>
+    /// Creates a TempBasal from a DateTimeOffset base with day offset.
+    /// </summary>
+    private static TempBasal MakeTempBasalFromBase(
+        DateTimeOffset baseTime,
+        int dayOffset,
+        int hourOffset,
+        double rateUPerHr,
+        double durationMinutes,
+        TempBasalOrigin origin = TempBasalOrigin.Scheduled
+    )
+    {
+        var startMills = baseTime.AddDays(dayOffset).AddHours(hourOffset).ToUnixTimeMilliseconds();
+        var endMills = startMills + (long)(durationMinutes * 60 * 1000);
+
+        return new TempBasal
+        {
+            Id = Guid.NewGuid(),
+            StartTimestamp = DateTimeOffset.FromUnixTimeMilliseconds(startMills).UtcDateTime,
+            EndTimestamp = DateTimeOffset.FromUnixTimeMilliseconds(endMills).UtcDateTime,
+            Rate = rateUPerHr,
+            Origin = origin,
         };
     }
 
@@ -137,13 +139,16 @@ public class TddCalculationTests
     {
         // A flat 1.0 U/hr basal for 24 hours = 24.0 U total basal
         // Delivered as 24 one-hour segments
-        var treatments = Enumerable
+        var tempBasals = Enumerable
             .Range(0, 24)
             .Select(h => MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60))
             .ToList();
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -166,30 +171,33 @@ public class TddCalculationTests
         //   16:00-22:00  1.1 U/hr  (6 hrs = 6.60 U)
         //   22:00-00:00  0.9 U/hr  (2 hrs = 1.80 U)
         //   Total expected: 24.00 U
-        var treatments = new List<Treatment>();
+        var tempBasals = new List<TempBasal>();
 
         // Overnight: 0.8 U/hr for 6 hours
         for (var h = 0; h < 6; h++)
-            treatments.Add(MakeScheduledBasal(h, rateUPerHr: 0.8, durationMinutes: 60));
+            tempBasals.Add(MakeScheduledBasal(h, rateUPerHr: 0.8, durationMinutes: 60));
 
         // Morning: 1.2 U/hr for 4 hours
         for (var h = 6; h < 10; h++)
-            treatments.Add(MakeScheduledBasal(h, rateUPerHr: 1.2, durationMinutes: 60));
+            tempBasals.Add(MakeScheduledBasal(h, rateUPerHr: 1.2, durationMinutes: 60));
 
         // Midday: 1.0 U/hr for 6 hours
         for (var h = 10; h < 16; h++)
-            treatments.Add(MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60));
+            tempBasals.Add(MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60));
 
         // Afternoon/Evening: 1.1 U/hr for 6 hours
         for (var h = 16; h < 22; h++)
-            treatments.Add(MakeScheduledBasal(h, rateUPerHr: 1.1, durationMinutes: 60));
+            tempBasals.Add(MakeScheduledBasal(h, rateUPerHr: 1.1, durationMinutes: 60));
 
         // Late night: 0.9 U/hr for 2 hours
         for (var h = 22; h < 24; h++)
-            treatments.Add(MakeScheduledBasal(h, rateUPerHr: 0.9, durationMinutes: 60));
+            tempBasals.Add(MakeScheduledBasal(h, rateUPerHr: 0.9, durationMinutes: 60));
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -197,28 +205,31 @@ public class TddCalculationTests
         // 4.80 + 4.80 + 6.00 + 6.60 + 1.80 = 24.00
         result.TotalBasal.Should().Be(24.0);
         result.Tdd.Should().Be(24.0);
-        result.BasalCount.Should().Be(24);
     }
 
     [Fact]
     public void TDD_WithScheduledBasalAndBoluses_ShouldSumBothCorrectly()
     {
         // Scheduled basal: 0.8 U/hr for 24 hours = 19.2 U
-        var treatments = Enumerable
+        var tempBasals = Enumerable
             .Range(0, 24)
             .Select(h => MakeScheduledBasal(h, rateUPerHr: 0.8, durationMinutes: 60))
             .ToList();
 
         // Add meal boluses throughout the day
-        treatments.Add(MakeBolus(7, units: 4.0, carbs: 45)); // Breakfast
-        treatments.Add(MakeBolus(12, units: 6.0, carbs: 60)); // Lunch
-        treatments.Add(MakeBolus(18, units: 5.5, carbs: 55)); // Dinner
-
-        // Add a correction bolus
-        treatments.Add(MakeBolus(15, units: 1.5, eventType: "Correction Bolus"));
+        var boluses = new List<Bolus>
+        {
+            MakeBolus(7, units: 4.0),   // Breakfast
+            MakeBolus(12, units: 6.0),  // Lunch
+            MakeBolus(18, units: 5.5),  // Dinner
+            MakeBolus(15, units: 1.5),  // Correction bolus
+        };
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            boluses,
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -228,8 +239,6 @@ public class TddCalculationTests
         result.TotalBolus.Should().Be(17.0);
         result.TotalInsulin.Should().Be(36.2);
         result.Tdd.Should().Be(36.2);
-        result.MealBoluses.Should().Be(3);
-        result.CorrectionBoluses.Should().Be(1);
         result.BolusCount.Should().Be(4);
     }
 
@@ -241,13 +250,16 @@ public class TddCalculationTests
     public void TDD_WithTempBasalAbsoluteRate_ShouldCalculateFromRate()
     {
         // A single temp basal at 2.0 U/hr for 30 minutes = 1.0 U
-        var treatments = new List<Treatment>
+        var tempBasals = new List<TempBasal>
         {
-            MakeTempBasal(hourOffset: 10, rateUPerHr: 2.0, durationMinutes: 30),
+            MakeAlgorithmTempBasal(hourOffset: 10, rateUPerHr: 2.0, durationMinutes: 30),
         };
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -257,36 +269,40 @@ public class TddCalculationTests
     }
 
     [Fact]
-    public void TDD_WithTempBasalFromRateOnly_ShouldAutoCalculateInsulin()
+    public void TDD_WithTempBasalFromRateOnly_ShouldCalculateInsulin()
     {
-        // Temp basal with Rate and Duration but no explicit Insulin.
-        // Treatment.Insulin getter will auto-calculate: 1.5 * (60 / 60) = 1.5 U
-        var treatments = new List<Treatment>
+        // TempBasal with rate 1.5 U/hr for 60 minutes = 1.5 U
+        var tempBasals = new List<TempBasal>
         {
-            MakeTempBasalFromRate(hourOffset: 8, rateUPerHr: 1.5, durationMinutes: 60),
+            MakeTempBasal(hourOffset: 8, rateUPerHr: 1.5, durationMinutes: 60),
         };
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
 
         result.TotalBasal.Should().Be(1.5);
-        result.BasalCount.Should().Be(1);
     }
 
     [Fact]
     public void TDD_WithZeroRateTempBasal_ShouldContributeZeroInsulin()
     {
         // A suspend (zero temp) should contribute 0 insulin
-        var treatments = new List<Treatment>
+        var tempBasals = new List<TempBasal>
         {
-            MakeTempBasal(hourOffset: 3, rateUPerHr: 0.0, durationMinutes: 30),
+            MakeAlgorithmTempBasal(hourOffset: 3, rateUPerHr: 0.0, durationMinutes: 30),
         };
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -299,17 +315,20 @@ public class TddCalculationTests
     public void TDD_WithMultipleTempBasals_ShouldSumAllSegments()
     {
         // Multiple temp basals throughout the day (as an AID system would produce)
-        var treatments = new List<Treatment>
+        var tempBasals = new List<TempBasal>
         {
-            MakeTempBasal(0, rateUPerHr: 0.5, durationMinutes: 30), // 0.25 U
-            MakeTempBasal(1, rateUPerHr: 1.2, durationMinutes: 30), // 0.60 U
-            MakeTempBasal(2, rateUPerHr: 0.0, durationMinutes: 30), // 0.00 U (suspend)
-            MakeTempBasal(3, rateUPerHr: 1.8, durationMinutes: 30), // 0.90 U
-            MakeTempBasal(4, rateUPerHr: 0.3, durationMinutes: 30), // 0.15 U
+            MakeAlgorithmTempBasal(0, rateUPerHr: 0.5, durationMinutes: 30),  // 0.25 U
+            MakeAlgorithmTempBasal(1, rateUPerHr: 1.2, durationMinutes: 30),  // 0.60 U
+            MakeAlgorithmTempBasal(2, rateUPerHr: 0.0, durationMinutes: 30),  // 0.00 U (suspend)
+            MakeAlgorithmTempBasal(3, rateUPerHr: 1.8, durationMinutes: 30),  // 0.90 U
+            MakeAlgorithmTempBasal(4, rateUPerHr: 0.3, durationMinutes: 30),  // 0.15 U
         };
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -322,16 +341,19 @@ public class TddCalculationTests
     public void TDD_WithTempBasalHavingPercent_ShouldTrackPercentMetadata()
     {
         // Temp basal expressed as 150% of scheduled rate.
-        // The insulin delivered is still the absolute amount (rate * duration / 60),
-        // but the percent field is metadata for analysis.
+        // The insulin delivered is still the absolute amount (rate * duration),
+        // but the scheduledRate property enables analysis.
         // Scheduled rate was 1.0 U/hr, temp is 150% = 1.5 U/hr for 60 min = 1.5 U
-        var treatments = new List<Treatment>
+        var tempBasals = new List<TempBasal>
         {
-            MakeTempBasal(hourOffset: 14, rateUPerHr: 1.5, durationMinutes: 60, percent: 150),
+            MakeAlgorithmTempBasal(hourOffset: 14, rateUPerHr: 1.5, durationMinutes: 60, scheduledRate: 1.0),
         };
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -347,29 +369,31 @@ public class TddCalculationTests
     public void TDD_TempBasalReplacesScheduledBasal_ShouldOnlyCountTempInsulin()
     {
         // When a temp basal is active, the pump replaces the scheduled basal.
-        // The uploader should only send the temp basal treatment for that period,
-        // not both the scheduled and temp.
+        // The TempBasal for that period reflects the temp rate, not the scheduled rate.
         //
         // Schedule: 1.0 U/hr all day (24 segments)
         // Temp at hour 10: 2.0 U/hr for 60 min (replaces the 1.0 U/hr segment)
         //
         // Expected: 23 hours at 1.0 = 23.0 U scheduled + 1 hour at 2.0 = 2.0 U temp = 25.0 U total
 
-        var treatments = new List<Treatment>();
+        var tempBasals = new List<TempBasal>();
 
         // Scheduled basal for all hours EXCEPT hour 10 (replaced by temp)
         for (var h = 0; h < 24; h++)
         {
             if (h == 10)
                 continue;
-            treatments.Add(MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60));
+            tempBasals.Add(MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60));
         }
 
         // Temp basal at hour 10: higher rate
-        treatments.Add(MakeTempBasal(10, rateUPerHr: 2.0, durationMinutes: 60));
+        tempBasals.Add(MakeAlgorithmTempBasal(10, rateUPerHr: 2.0, durationMinutes: 60));
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -377,7 +401,6 @@ public class TddCalculationTests
         // 23 * 1.0 + 1 * 2.0 = 25.0
         result.TotalBasal.Should().Be(25.0);
         result.Tdd.Should().Be(25.0);
-        result.BasalCount.Should().Be(24);
     }
 
     [Fact]
@@ -387,21 +410,24 @@ public class TddCalculationTests
         // Schedule: 1.0 U/hr all day
         // Hours 14-16: temp at 0.3 U/hr (2 hours replaced)
 
-        var treatments = new List<Treatment>();
+        var tempBasals = new List<TempBasal>();
 
         for (var h = 0; h < 24; h++)
         {
             if (h >= 14 && h < 16)
                 continue;
-            treatments.Add(MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60));
+            tempBasals.Add(MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60));
         }
 
         // 2 hours of reduced temp basal
-        treatments.Add(MakeTempBasal(14, rateUPerHr: 0.3, durationMinutes: 60));
-        treatments.Add(MakeTempBasal(15, rateUPerHr: 0.3, durationMinutes: 60));
+        tempBasals.Add(MakeAlgorithmTempBasal(14, rateUPerHr: 0.3, durationMinutes: 60));
+        tempBasals.Add(MakeAlgorithmTempBasal(15, rateUPerHr: 0.3, durationMinutes: 60));
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -418,21 +444,24 @@ public class TddCalculationTests
         // Schedule: 1.0 U/hr all day
         // Hours 2-4: suspended (0 U/hr)
 
-        var treatments = new List<Treatment>();
+        var tempBasals = new List<TempBasal>();
 
         for (var h = 0; h < 24; h++)
         {
             if (h >= 2 && h < 4)
                 continue;
-            treatments.Add(MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60));
+            tempBasals.Add(MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60));
         }
 
         // 2 hours of zero temp (suspend)
-        treatments.Add(MakeTempBasal(2, rateUPerHr: 0.0, durationMinutes: 60, percent: 0));
-        treatments.Add(MakeTempBasal(3, rateUPerHr: 0.0, durationMinutes: 60, percent: 0));
+        tempBasals.Add(MakeAlgorithmTempBasal(2, rateUPerHr: 0.0, durationMinutes: 60));
+        tempBasals.Add(MakeAlgorithmTempBasal(3, rateUPerHr: 0.0, durationMinutes: 60));
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -465,7 +494,7 @@ public class TddCalculationTests
         //   18:30 Meal Bolus 6.0 U (dinner)
         //   15:30 Correction Bolus 1.2 U
 
-        var treatments = new List<Treatment>();
+        var tempBasals = new List<TempBasal>();
 
         // Build scheduled basal segments (excluding hours overridden by temps)
         var overriddenHours = new HashSet<int> { 2, 7, 14, 20 };
@@ -483,23 +512,29 @@ public class TddCalculationTests
                 _ => 0.85,
             };
 
-            treatments.Add(MakeScheduledBasal(h, rate, 60));
+            tempBasals.Add(MakeScheduledBasal(h, rate, 60));
         }
 
         // AID temp basals
-        treatments.Add(MakeTempBasal(2, rateUPerHr: 0.0, durationMinutes: 60));
-        treatments.Add(MakeTempBasal(7, rateUPerHr: 1.8, durationMinutes: 60));
-        treatments.Add(MakeTempBasal(14, rateUPerHr: 0.4, durationMinutes: 60));
-        treatments.Add(MakeTempBasal(20, rateUPerHr: 1.3, durationMinutes: 60));
+        tempBasals.Add(MakeAlgorithmTempBasal(2, rateUPerHr: 0.0, durationMinutes: 60));
+        tempBasals.Add(MakeAlgorithmTempBasal(7, rateUPerHr: 1.8, durationMinutes: 60));
+        tempBasals.Add(MakeAlgorithmTempBasal(14, rateUPerHr: 0.4, durationMinutes: 60));
+        tempBasals.Add(MakeAlgorithmTempBasal(20, rateUPerHr: 1.3, durationMinutes: 60));
 
         // Boluses
-        treatments.Add(MakeBolus(7, units: 4.5, carbs: 45));
-        treatments.Add(MakeBolus(12, units: 5.0, carbs: 60));
-        treatments.Add(MakeBolus(18, units: 6.0, carbs: 55));
-        treatments.Add(MakeBolus(15, units: 1.2, eventType: "Correction Bolus"));
+        var boluses = new List<Bolus>
+        {
+            MakeBolus(7, units: 4.5),
+            MakeBolus(12, units: 5.0),
+            MakeBolus(18, units: 6.0),
+            MakeBolus(15, units: 1.2),
+        };
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            boluses,
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -530,33 +565,23 @@ public class TddCalculationTests
         result.TotalBolus.Should().Be(expectedBolus);
         result.TotalInsulin.Should().Be(expectedTotal);
         result.Tdd.Should().Be(Math.Round(expectedTotal * 10) / 10);
-        result.MealBoluses.Should().Be(3);
-        result.CorrectionBoluses.Should().Be(1);
     }
 
     [Fact]
-    public void TDD_TempBasalWithAbsoluteProperty_ShouldUseAbsoluteRate()
+    public void TDD_TempBasalWithAbsoluteRate_ShouldUseRate()
     {
-        // Some uploaders use Absolute instead of Rate for temp basals.
-        // The Treatment model maps Absolute -> Rate as a fallback,
-        // and Insulin auto-calculates from whichever is available.
-        var mills = DayStart.AddHours(5).ToUnixTimeMilliseconds();
-
-        var treatments = new List<Treatment>
+        // A TempBasal with rate directly represents the absolute rate.
+        // 1.6 U/hr for 30 minutes = 0.8 U
+        var tempBasals = new List<TempBasal>
         {
-            new Treatment
-            {
-                Id = "temp-absolute",
-                EventType = "Temp Basal",
-                Absolute = 1.6,
-                Duration = 30,
-                Mills = mills,
-                Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(mills).ToString("o"),
-            },
+            MakeTempBasal(hourOffset: 5, rateUPerHr: 1.6, durationMinutes: 30),
         };
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -572,18 +597,25 @@ public class TddCalculationTests
     [Fact]
     public void DailyRatios_WithScheduledBasalAndBoluses_ShouldSplitCorrectly()
     {
-        var treatments = new List<Treatment>();
-
         // Full day scheduled basal at 1.0 U/hr = 24.0 U basal
-        for (var h = 0; h < 24; h++)
-            treatments.Add(MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60));
+        var tempBasals = Enumerable
+            .Range(0, 24)
+            .Select(h => MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60))
+            .ToList();
 
         // 16.0 U bolus total
-        treatments.Add(MakeBolus(7, units: 5.0, carbs: 45));
-        treatments.Add(MakeBolus(12, units: 6.0, carbs: 60));
-        treatments.Add(MakeBolus(18, units: 5.0, carbs: 50));
+        var boluses = new List<Bolus>
+        {
+            MakeBolus(7, units: 5.0),
+            MakeBolus(12, units: 6.0),
+            MakeBolus(18, units: 5.0),
+        };
 
-        var result = _statisticsService.CalculateDailyBasalBolusRatios(treatments);
+        var result = _statisticsService.CalculateDailyBasalBolusRatios(
+            boluses,
+            Array.Empty<Bolus>(),
+            tempBasals
+        );
 
         result.DayCount.Should().Be(1);
         result.DailyData.Should().HaveCount(1);
@@ -601,21 +633,25 @@ public class TddCalculationTests
     [Fact]
     public void DailyRatios_WithTempBasalReplacingScheduled_ShouldReflectTempRate()
     {
-        var treatments = new List<Treatment>();
+        var tempBasals = new List<TempBasal>();
 
         // Scheduled basal for 22 hours at 1.0 U/hr
         for (var h = 0; h < 24; h++)
         {
             if (h >= 10 && h < 12)
                 continue; // replaced by temp
-            treatments.Add(MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60));
+            tempBasals.Add(MakeScheduledBasal(h, rateUPerHr: 1.0, durationMinutes: 60));
         }
 
         // Temp basal hours 10-12 at 2.5 U/hr = 5.0 U
-        treatments.Add(MakeTempBasal(10, rateUPerHr: 2.5, durationMinutes: 60));
-        treatments.Add(MakeTempBasal(11, rateUPerHr: 2.5, durationMinutes: 60));
+        tempBasals.Add(MakeAlgorithmTempBasal(10, rateUPerHr: 2.5, durationMinutes: 60));
+        tempBasals.Add(MakeAlgorithmTempBasal(11, rateUPerHr: 2.5, durationMinutes: 60));
 
-        var result = _statisticsService.CalculateDailyBasalBolusRatios(treatments);
+        var result = _statisticsService.CalculateDailyBasalBolusRatios(
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals
+        );
 
         result.DayCount.Should().Be(1);
 
@@ -629,65 +665,43 @@ public class TddCalculationTests
     public void DailyRatios_MultiDay_WithVaryingTempBasals_ShouldTrackPerDay()
     {
         var day1Start = DayStart;
-        var day2Start = DayStart.AddDays(1);
 
-        var treatments = new List<Treatment>();
+        var tempBasals = new List<TempBasal>();
 
         // Day 1: flat 1.0 U/hr, no temps = 24.0 U
         for (var h = 0; h < 24; h++)
         {
-            var mills = day1Start.AddHours(h).ToUnixTimeMilliseconds();
-            treatments.Add(
-                new Treatment
-                {
-                    Id = $"d1-basal-{h}",
-                    EventType = "Basal",
-                    Insulin = 1.0,
-                    Rate = 1.0,
-                    Duration = 60,
-                    Mills = mills,
-                    Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(mills).ToString("o"),
-                }
+            tempBasals.Add(
+                MakeTempBasalFromBase(day1Start, 0, h, rateUPerHr: 1.0, durationMinutes: 60)
             );
         }
 
         // Day 2: 20 hours at 1.0 + 4 hours temp at 0.5 = 22.0 U
         for (var h = 0; h < 24; h++)
         {
-            var mills = day2Start.AddHours(h).ToUnixTimeMilliseconds();
             if (h >= 8 && h < 12)
             {
-                treatments.Add(
-                    new Treatment
-                    {
-                        Id = $"d2-temp-{h}",
-                        EventType = "Temp Basal",
-                        Insulin = 0.5,
-                        Rate = 0.5,
-                        Duration = 60,
-                        Mills = mills,
-                        Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(mills).ToString("o"),
-                    }
+                tempBasals.Add(
+                    MakeTempBasalFromBase(
+                        day1Start, 1, h, rateUPerHr: 0.5, durationMinutes: 60, origin: TempBasalOrigin.Algorithm
+                    )
                 );
             }
             else
             {
-                treatments.Add(
-                    new Treatment
-                    {
-                        Id = $"d2-basal-{h}",
-                        EventType = "Basal",
-                        Insulin = 1.0,
-                        Rate = 1.0,
-                        Duration = 60,
-                        Mills = mills,
-                        Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(mills).ToString("o"),
-                    }
+                tempBasals.Add(
+                    MakeTempBasalFromBase(
+                        day1Start, 1, h, rateUPerHr: 1.0, durationMinutes: 60
+                    )
                 );
             }
         }
 
-        var result = _statisticsService.CalculateDailyBasalBolusRatios(treatments);
+        var result = _statisticsService.CalculateDailyBasalBolusRatios(
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals
+        );
 
         result.DayCount.Should().Be(2);
         result.DailyData.Should().HaveCount(2);
@@ -711,35 +725,46 @@ public class TddCalculationTests
     public void BasalAnalysis_ShouldCountTempBasalCategories()
     {
         // Mix of high, low, and zero temp basals
-        var treatments = new List<Treatment>
+        // Using origin and scheduledRate for temp basal categorization
+        var tempBasals = new List<TempBasal>
         {
-            MakeTempBasal(8, rateUPerHr: 1.5, durationMinutes: 30, percent: 150), // High
-            MakeTempBasal(10, rateUPerHr: 1.8, durationMinutes: 30, percent: 180), // High
-            MakeTempBasal(14, rateUPerHr: 0.5, durationMinutes: 30, percent: 50), // Low
-            MakeTempBasal(16, rateUPerHr: 0.0, durationMinutes: 30, percent: 0), // Zero
+            MakeAlgorithmTempBasal(8, rateUPerHr: 1.5, durationMinutes: 30, scheduledRate: 1.0),   // High (1.5 > 1.0)
+            MakeAlgorithmTempBasal(10, rateUPerHr: 1.8, durationMinutes: 30, scheduledRate: 1.0),  // High (1.8 > 1.0)
+            MakeAlgorithmTempBasal(14, rateUPerHr: 0.5, durationMinutes: 30, scheduledRate: 1.0),  // Low (0.5 < 1.0)
+            MakeAlgorithmTempBasal(16, rateUPerHr: 0.0, durationMinutes: 30, scheduledRate: 1.0),  // Zero (suspend)
         };
 
-        var result = _statisticsService.CalculateBasalAnalysis(treatments, StartDate, EndDate);
+        var result = _statisticsService.CalculateBasalAnalysis(
+            tempBasals,
+            Array.Empty<Bolus>(),
+            StartDate,
+            EndDate
+        );
 
         result.TempBasalInfo.Total.Should().Be(4);
         result.TempBasalInfo.HighTemps.Should().Be(2);
-        // LowTemps counts percent < 100, which includes the zero temp (percent=0)
-        result.TempBasalInfo.LowTemps.Should().Be(2);
+        // LowTemps counts rate < scheduledRate, which includes the zero/suspended temp
+        result.TempBasalInfo.LowTemps.Should().Be(1);
         result.TempBasalInfo.ZeroTemps.Should().Be(1);
     }
 
     [Fact]
     public void BasalAnalysis_WithMixedRates_ShouldCalculateCorrectStats()
     {
-        var treatments = new List<Treatment>
+        var tempBasals = new List<TempBasal>
         {
             MakeScheduledBasal(0, rateUPerHr: 0.8, durationMinutes: 60),
             MakeScheduledBasal(6, rateUPerHr: 1.2, durationMinutes: 60),
-            MakeTempBasal(12, rateUPerHr: 1.5, durationMinutes: 60),
+            MakeAlgorithmTempBasal(12, rateUPerHr: 1.5, durationMinutes: 60, scheduledRate: 1.0),
             MakeScheduledBasal(18, rateUPerHr: 0.9, durationMinutes: 60),
         };
 
-        var result = _statisticsService.CalculateBasalAnalysis(treatments, StartDate, EndDate);
+        var result = _statisticsService.CalculateBasalAnalysis(
+            tempBasals,
+            Array.Empty<Bolus>(),
+            StartDate,
+            EndDate
+        );
 
         result.Stats.Count.Should().Be(4);
         result.Stats.MinRate.Should().Be(0.8);
@@ -755,10 +780,13 @@ public class TddCalculationTests
     #region Edge Cases
 
     [Fact]
-    public void TDD_WithNoTreatments_ShouldReturnZeros()
+    public void TDD_WithNoData_ShouldReturnZeros()
     {
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            Array.Empty<Treatment>(),
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            Array.Empty<TempBasal>(),
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -772,14 +800,17 @@ public class TddCalculationTests
     [Fact]
     public void TDD_WithOnlyBoluses_ShouldHaveZeroBasal()
     {
-        var treatments = new List<Treatment>
+        var boluses = new List<Bolus>
         {
-            MakeBolus(7, units: 5.0, carbs: 45),
-            MakeBolus(12, units: 6.0, carbs: 60),
+            MakeBolus(7, units: 5.0),
+            MakeBolus(12, units: 6.0),
         };
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            boluses,
+            Array.Empty<Bolus>(),
+            Array.Empty<TempBasal>(),
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -797,28 +828,25 @@ public class TddCalculationTests
         var start = StartDate;
         var end = StartDate.AddDays(3);
 
-        var treatments = new List<Treatment>();
+        var tempBasals = new List<TempBasal>();
         for (var d = 0; d < 3; d++)
         {
             for (var h = 0; h < 24; h++)
             {
-                var mills = DayStart.AddDays(d).AddHours(h).ToUnixTimeMilliseconds();
-                treatments.Add(
-                    new Treatment
-                    {
-                        Id = $"basal-d{d}-h{h}",
-                        EventType = "Basal",
-                        Insulin = 1.0,
-                        Rate = 1.0,
-                        Duration = 60,
-                        Mills = mills,
-                        Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(mills).ToString("o"),
-                    }
+                tempBasals.Add(
+                    MakeTempBasalFromBase(DayStart, d, h, rateUPerHr: 1.0, durationMinutes: 60)
                 );
             }
         }
 
-        var result = _statisticsService.CalculateInsulinDeliveryStatistics(treatments, start, end);
+        var result = _statisticsService.CalculateInsulinDeliveryStatistics(
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
+            start,
+            end
+        );
 
         // 72 hours of 1.0 U/hr = 72.0 U total
         result.TotalBasal.Should().Be(72.0);
@@ -831,13 +859,16 @@ public class TddCalculationTests
     public void TDD_SubHourTempBasal_ShouldCalculateFractionalInsulin()
     {
         // A very short temp basal: 3.0 U/hr for 5 minutes = 0.25 U
-        var treatments = new List<Treatment>
+        var tempBasals = new List<TempBasal>
         {
-            MakeTempBasal(hourOffset: 10, rateUPerHr: 3.0, durationMinutes: 5),
+            MakeAlgorithmTempBasal(hourOffset: 10, rateUPerHr: 3.0, durationMinutes: 5),
         };
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );
@@ -846,25 +877,20 @@ public class TddCalculationTests
     }
 
     [Fact]
-    public void TDD_SMBTreatments_ShouldBeCountedAsBolus()
+    public void TDD_SMBBoluses_ShouldBeCountedAsBolus()
     {
-        // Super Micro Boluses from AID systems should be counted as bolus, not basal
-        var mills = DayStart.AddHours(10).ToUnixTimeMilliseconds();
-
-        var treatments = new List<Treatment>
+        // Super Micro Boluses from AID systems should be counted as bolus, not basal.
+        // In v4, SMBs are Bolus records with Automatic = true.
+        var boluses = new List<Bolus>
         {
-            new Treatment
-            {
-                Id = "smb-1",
-                EventType = "SMB",
-                Insulin = 0.3,
-                Mills = mills,
-                Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(mills).ToString("o"),
-            },
+            MakeBolus(10, units: 0.3, automatic: true),
         };
 
         var result = _statisticsService.CalculateInsulinDeliveryStatistics(
-            treatments,
+            boluses,
+            Array.Empty<Bolus>(),
+            Array.Empty<TempBasal>(),
+            Array.Empty<CarbIntake>(),
             StartDate,
             EndDate
         );

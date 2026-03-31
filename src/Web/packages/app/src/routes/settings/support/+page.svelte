@@ -28,7 +28,7 @@
     HelpCircle,
     CheckCircle,
   } from "lucide-svelte";
-  import { fetchExternalUrls } from "$lib/data/metadata.remote";
+  import { getExternalUrls } from "$api";
   import { onMount } from "svelte";
   import { getApiClient } from "$lib/api/client";
   import type { ExternalUrls } from "$lib/api";
@@ -63,7 +63,7 @@
     }
 
     try {
-      externalUrls = await fetchExternalUrls();
+      externalUrls = await getExternalUrls();
     } catch (e) {
       console.error("Failed to load external URLs", e);
     }
@@ -184,7 +184,7 @@
   <title>Support & Community - Settings - Nocturne</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 max-w-3xl space-y-6">
+<div class="container mx-auto max-w-4xl p-6 space-y-6">
   <!-- Header -->
   <div>
     <h1 class="text-2xl font-bold tracking-tight">Support & Community</h1>

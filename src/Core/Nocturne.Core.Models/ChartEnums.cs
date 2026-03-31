@@ -15,6 +15,23 @@ public enum DeviceEventType
     SiteChange,
     InsulinChange,
     PumpBatteryChange,
+    PodChange,
+    ReservoirChange,
+    CannulaChange,
+    TransmitterSensorInsert,
+    PodActivated,
+    PodDeactivated,
+    PumpSuspend,
+    PumpResume,
+    Priming,
+    TubePriming,
+    NeedlePriming,
+    Rewind,
+    DateChanged,
+    TimeChanged,
+    BolusMaxChanged,
+    BasalMaxChanged,
+    ProfileSwitch,
 }
 
 /// <summary>

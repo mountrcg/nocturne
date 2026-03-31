@@ -16,7 +16,7 @@ public static class TreatmentFoodMapper
         return new TreatmentFood
         {
             Id = entity.Id,
-            TreatmentId = entity.TreatmentId,
+            CarbIntakeId = entity.CarbIntakeId,
             FoodId = entity.FoodId,
             Portions = entity.Portions,
             Carbs = entity.Carbs,
@@ -24,6 +24,8 @@ public static class TreatmentFoodMapper
             Note = entity.Note,
             FoodName = food?.Name,
             CarbsPerPortion = food != null ? (decimal)food.Carbs : null,
+            FatPerPortion = food != null ? (decimal)food.Fat : null,
+            ProteinPerPortion = food != null ? (decimal)food.Protein : null,
         };
     }
 
@@ -35,7 +37,7 @@ public static class TreatmentFoodMapper
         return new TreatmentFoodEntity
         {
             Id = entry.Id == Guid.Empty ? Guid.CreateVersion7() : entry.Id,
-            TreatmentId = entry.TreatmentId,
+            CarbIntakeId = entry.CarbIntakeId,
             FoodId = entry.FoodId,
             Portions = entry.Portions,
             Carbs = entry.Carbs,

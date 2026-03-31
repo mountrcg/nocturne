@@ -22,21 +22,8 @@
   const units = $derived(glucoseUnits.current);
   const isMMOL = $derived(units === "mmol");
 
-  // Memoize data transformation to avoid recreating arrays on every render
-  // We use a stable key based on rawData length + first/last item + units
-  let cachedData: typeof rawData = [];
-  let cacheKey = "";
-
-  const data = $derived.by(() => {
-    // Create a simple cache key to detect meaningful changes
-    const newKey = `${rawData.length}-${rawData[0]?.hour ?? ""}-${rawData[rawData.length - 1]?.hour ?? ""}-${units}`;
-
-    if (newKey === cacheKey && cachedData.length > 0) {
-      return cachedData;
-    }
-
-    // Transform data with unit conversion
-    cachedData = rawData.map((d) => ({
+  const data = $derived(
+    rawData.map((d) => ({
       ...d,
       median: convertToDisplayUnits(d.median ?? 0, units),
       percentiles: d.percentiles
@@ -47,10 +34,8 @@
             p90: convertToDisplayUnits(d.percentiles.p90 ?? 0, units),
           }
         : undefined,
-    }));
-    cacheKey = newKey;
-    return cachedData;
-  });
+    }))
+  );
 
   // Dynamic Y-axis domain based on units
   const yDomain = $derived<[number, number]>(isMMOL ? [0, 22.2] : [0, 400]);
@@ -89,13 +74,13 @@
       {
         key: "p10",
         value: [(d) => d.percentiles?.p25, (d) => d.percentiles?.p10],
-        color: "oklch(from var(--chart-1) l c h / 0.2)",
+        color: "oklch(from var(--chart-1) l c h / 0.35)",
         label: "P10",
       },
       {
         key: "p25",
         value: [(d) => d.median, (d) => d.percentiles?.p25],
-        color: "oklch(from var(--chart-1) l c h / 0.4)",
+        color: "oklch(from var(--chart-1) l c h / 0.6)",
         label: "P25",
       },
       {
@@ -110,13 +95,13 @@
       {
         key: "percentiles.p75",
         value: [(d) => d.median, (d) => d.percentiles?.p75],
-        color: "oklch(from var(--chart-1) l c h / 0.4)",
+        color: "oklch(from var(--chart-1) l c h / 0.6)",
         label: "P75",
       },
       {
         key: "p90",
         value: [(d) => d.percentiles?.p75, (d) => d.percentiles?.p90],
-        color: "oklch(from var(--chart-1) l c h / 0.2)",
+        color: "oklch(from var(--chart-1) l c h / 0.35)",
         label: "P90",
       },
     ]}

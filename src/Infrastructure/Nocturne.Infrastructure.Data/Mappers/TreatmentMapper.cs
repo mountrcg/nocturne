@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Nocturne.Core.Models;
+using Nocturne.Core.Models.V4;
 using Nocturne.Infrastructure.Data.Common;
 using Nocturne.Infrastructure.Data.Entities;
 using Nocturne.Infrastructure.Data.Entities.OwnedTypes;
@@ -16,7 +17,7 @@ public static class TreatmentMapper
     /// </summary>
     public static TreatmentEntity ToEntity(Treatment treatment)
     {
-        return new TreatmentEntity
+        var entity = new TreatmentEntity
         {
             Id = string.IsNullOrEmpty(treatment.Id)
                 ? Guid.CreateVersion7()
@@ -50,6 +51,10 @@ public static class TreatmentMapper
             AdditionalPropertiesJson =
                 treatment.AdditionalProperties != null
                     ? JsonSerializer.Serialize(treatment.AdditionalProperties)
+                    : null,
+            InsulinContextJson =
+                treatment.InsulinContext != null
+                    ? JsonSerializer.Serialize(treatment.InsulinContext)
                     : null,
 
             GlucoseData = new TreatmentGlucoseData
@@ -133,6 +138,13 @@ public static class TreatmentMapper
                 ReasonDisplay = treatment.ReasonDisplay,
             },
         };
+
+        if (treatment.IsValid == false)
+        {
+            entity.DeletedAt = DateTime.UtcNow;
+        }
+
+        return entity;
     }
 
     /// <summary>
@@ -172,6 +184,9 @@ public static class TreatmentMapper
             AdditionalProperties = DeserializeJsonProperty<Dictionary<string, object>>(
                 entity.AdditionalPropertiesJson
             ),
+            InsulinContext = DeserializeJsonProperty<TreatmentInsulinContext>(
+                entity.InsulinContextJson
+            ),
             SrvModified = entity.SysUpdatedAt != default
                 ? new DateTimeOffset(entity.SysUpdatedAt, TimeSpan.Zero).ToUnixTimeMilliseconds()
                 : null,
@@ -210,7 +225,7 @@ public static class TreatmentMapper
             InsulinOnBoard = entity.BolusCalc.InsulinOnBoard,
             BloodGlucoseInput = entity.BolusCalc.BloodGlucoseInput,
             BloodGlucoseInputSource = entity.BolusCalc.BloodGlucoseInputSource,
-            CalculationType = Enum.TryParse<CalculationType>(entity.BolusCalc.CalculationType, out var calcType) ? calcType : null,
+            CalculationType = Enum.TryParse<Nocturne.Core.Models.CalculationType>(entity.BolusCalc.CalculationType, out var calcType) ? calcType : null,
             BolusCalc = DeserializeJsonProperty<Dictionary<string, object>>(entity.BolusCalc.BolusCalcJson),
             BolusCalculatorResult = entity.BolusCalc.BolusCalculatorResult,
             EnteredInsulin = entity.BolusCalc.EnteredInsulin,
@@ -233,7 +248,7 @@ public static class TreatmentMapper
             PumpSerial = entity.Aaps.PumpSerial,
             PumpType = entity.Aaps.PumpType,
             EndId = entity.Aaps.EndId,
-            IsValid = entity.Aaps.IsValid,
+            IsValid = entity.DeletedAt == null,
             IsReadOnly = entity.Aaps.IsReadOnly,
             IsBasalInsulin = entity.Aaps.IsBasalInsulin,
             OriginalDuration = entity.Aaps.OriginalDuration,
@@ -286,6 +301,10 @@ public static class TreatmentMapper
         entity.AdditionalPropertiesJson =
             treatment.AdditionalProperties != null
                 ? JsonSerializer.Serialize(treatment.AdditionalProperties)
+                : null;
+        entity.InsulinContextJson =
+            treatment.InsulinContext != null
+                ? JsonSerializer.Serialize(treatment.InsulinContext)
                 : null;
 
         // GlucoseData
@@ -344,6 +363,10 @@ public static class TreatmentMapper
         entity.Aaps.PumpType = treatment.PumpType;
         entity.Aaps.EndId = treatment.EndId;
         entity.Aaps.IsValid = treatment.IsValid;
+        if (treatment.IsValid == false)
+        {
+            entity.DeletedAt ??= DateTime.UtcNow;
+        }
         entity.Aaps.IsReadOnly = treatment.IsReadOnly;
         entity.Aaps.IsBasalInsulin = treatment.IsBasalInsulin;
         entity.Aaps.OriginalDuration = treatment.OriginalDuration;

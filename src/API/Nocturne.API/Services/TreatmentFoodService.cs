@@ -1,23 +1,24 @@
 using Microsoft.EntityFrameworkCore;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Repositories;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Data;
-using Nocturne.Infrastructure.Data.Repositories;
+using Nocturne.Infrastructure.Data.Entities.V4;
 
 namespace Nocturne.API.Services;
 
 /// <summary>
-/// Domain service implementation for treatment food breakdown operations.
+/// Domain service implementation for food breakdown operations linked to carb intake records.
 /// </summary>
 public class TreatmentFoodService : ITreatmentFoodService
 {
     private readonly NocturneDbContext _context;
-    private readonly TreatmentFoodRepository _treatmentFoodRepository;
+    private readonly ITreatmentFoodRepository _treatmentFoodRepository;
     private readonly ILogger<TreatmentFoodService> _logger;
 
     public TreatmentFoodService(
         NocturneDbContext context,
-        TreatmentFoodRepository treatmentFoodRepository,
+        ITreatmentFoodRepository treatmentFoodRepository,
         ILogger<TreatmentFoodService> logger
     )
     {
@@ -27,48 +28,47 @@ public class TreatmentFoodService : ITreatmentFoodService
     }
 
     /// <inheritdoc />
-    public async Task<TreatmentFoodBreakdown?> GetByTreatmentIdAsync(
-        Guid treatmentId,
+    public async Task<TreatmentFoodBreakdown?> GetByCarbIntakeIdAsync(
+        Guid carbIntakeId,
         CancellationToken cancellationToken = default
     )
     {
-        var treatmentEntity = await _context
-            .Treatments.AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == treatmentId, cancellationToken);
+        var carbIntakeEntity = await _context
+            .Set<CarbIntakeEntity>()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == carbIntakeId, cancellationToken);
 
-        if (treatmentEntity == null)
+        if (carbIntakeEntity == null)
         {
             return null;
         }
 
-        var entries = await _treatmentFoodRepository.GetByTreatmentIdAsync(
-            treatmentId,
+        var entries = await _treatmentFoodRepository.GetByCarbIntakeIdAsync(
+            carbIntakeId,
             cancellationToken
         );
 
         var attributedCarbs = entries.Sum(entry => entry.Carbs);
-        var treatmentCarbs = treatmentEntity.Carbs.HasValue
-            ? (decimal)treatmentEntity.Carbs.Value
-            : 0m;
+        var totalCarbs = (decimal)carbIntakeEntity.Carbs;
 
         return new TreatmentFoodBreakdown
         {
-            TreatmentId = treatmentEntity.Id,
+            CarbIntakeId = carbIntakeEntity.Id,
             Foods = entries.ToList(),
             IsAttributed = entries.Count > 0,
             AttributedCarbs = attributedCarbs,
-            UnspecifiedCarbs = treatmentCarbs - attributedCarbs,
+            UnspecifiedCarbs = totalCarbs - attributedCarbs,
         };
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<TreatmentFood>> GetByTreatmentIdsAsync(
-        IEnumerable<Guid> treatmentIds,
+    public async Task<IEnumerable<TreatmentFood>> GetByCarbIntakeIdsAsync(
+        IEnumerable<Guid> carbIntakeIds,
         CancellationToken cancellationToken = default
     )
     {
-        return await _treatmentFoodRepository.GetByTreatmentIdsAsync(
-            treatmentIds,
+        return await _treatmentFoodRepository.GetByCarbIntakeIdsAsync(
+            carbIntakeIds,
             cancellationToken
         );
     }
@@ -79,7 +79,7 @@ public class TreatmentFoodService : ITreatmentFoodService
         CancellationToken cancellationToken = default
     )
     {
-        _logger.LogDebug("Creating treatment food entry for treatment {TreatmentId}", entry.TreatmentId);
+        _logger.LogDebug("Creating food entry for carb intake {CarbIntakeId}", entry.CarbIntakeId);
         return await _treatmentFoodRepository.CreateAsync(entry, cancellationToken);
     }
 
@@ -89,14 +89,34 @@ public class TreatmentFoodService : ITreatmentFoodService
         CancellationToken cancellationToken = default
     )
     {
-        _logger.LogDebug("Updating treatment food entry {EntryId}", entry.Id);
+        _logger.LogDebug("Updating food entry {EntryId}", entry.Id);
         return await _treatmentFoodRepository.UpdateAsync(entry, cancellationToken);
     }
 
     /// <inheritdoc />
     public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        _logger.LogDebug("Deleting treatment food entry {EntryId}", id);
+        _logger.LogDebug("Deleting food entry {EntryId}", id);
         return await _treatmentFoodRepository.DeleteAsync(id, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> CountByFoodIdAsync(Guid foodId, CancellationToken cancellationToken = default)
+    {
+        return await _treatmentFoodRepository.CountByFoodIdAsync(foodId, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> ClearFoodReferencesByFoodIdAsync(Guid foodId, CancellationToken cancellationToken = default)
+    {
+        _logger.LogDebug("Clearing food references for food {FoodId}", foodId);
+        return await _treatmentFoodRepository.ClearFoodReferencesByFoodIdAsync(foodId, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> DeleteByFoodIdAsync(Guid foodId, CancellationToken cancellationToken = default)
+    {
+        _logger.LogDebug("Deleting all attribution entries for food {FoodId}", foodId);
+        return await _treatmentFoodRepository.DeleteByFoodIdAsync(foodId, cancellationToken);
     }
 }

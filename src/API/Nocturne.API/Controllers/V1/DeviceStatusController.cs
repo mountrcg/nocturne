@@ -1,6 +1,8 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Nocturne.API.Attributes;
+using Nocturne.API.Services;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models;
 
@@ -12,20 +14,18 @@ namespace Nocturne.API.Controllers.V1;
 /// </summary>
 [ApiController]
 [Route("api/v1/[controller]")]
+[Authorize]
 public class DeviceStatusController : ControllerBase
 {
     private readonly IDeviceStatusService _deviceStatusService;
-    private readonly IDataFormatService _dataFormatService;
     private readonly ILogger<DeviceStatusController> _logger;
 
     public DeviceStatusController(
         IDeviceStatusService deviceStatusService,
-        IDataFormatService dataFormatService,
         ILogger<DeviceStatusController> logger
     )
     {
         _deviceStatusService = deviceStatusService;
-        _dataFormatService = dataFormatService;
         _logger = logger;
     }
 
@@ -38,6 +38,7 @@ public class DeviceStatusController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Array of device status entries ordered by most recent first</returns>
     [HttpGet]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v1/devicestatus")]
     [ProducesResponseType(typeof(DeviceStatus[]), 200)]
     [ProducesResponseType(400)]
@@ -113,11 +114,11 @@ public class DeviceStatusController : ControllerBase
 
             try
             {
-                var formattedData = _dataFormatService.FormatDeviceStatus(
+                var formattedData = DataFormatService.FormatDeviceStatus(
                     deviceStatusArray,
                     format
                 );
-                var contentType = _dataFormatService.GetContentType(format);
+                var contentType = DataFormatService.GetContentType(format);
                 return Content(formattedData, contentType);
             }
             catch (ArgumentException)
@@ -345,6 +346,7 @@ public class DeviceStatusController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Array of device status entries ordered by most recent first</returns>
     [HttpGet("~/api/v1/devicestatus.json")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v1/devicestatus.json")]
     [ProducesResponseType(typeof(DeviceStatus[]), 200)]
     [ProducesResponseType(400)]

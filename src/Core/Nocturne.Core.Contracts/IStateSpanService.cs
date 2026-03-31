@@ -23,8 +23,8 @@ public interface IStateSpanService
     Task<IEnumerable<StateSpan>> GetStateSpansAsync(
         StateSpanCategory? category = null,
         string? state = null,
-        long? from = null,
-        long? to = null,
+        DateTime? from = null,
+        DateTime? to = null,
         string? source = null,
         bool? active = null,
         int count = 100,
@@ -59,34 +59,6 @@ public interface IStateSpanService
     /// <returns>True if deleted successfully, false otherwise</returns>
     Task<bool> DeleteStateSpanAsync(
         string id,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Get basal deliveries as Treatments for v1-v3 API compatibility.
-    /// Converts BasalDelivery StateSpans to Treatment objects with "Temp Basal" event type.
-    /// </summary>
-    /// <param name="from">Optional start time in milliseconds since Unix epoch</param>
-    /// <param name="to">Optional end time in milliseconds since Unix epoch</param>
-    /// <param name="count">Maximum number of treatments to return</param>
-    /// <param name="skip">Number of treatments to skip for pagination</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Collection of treatments representing basal deliveries</returns>
-    Task<IEnumerable<Treatment>> GetBasalDeliveriesAsTreatmentsAsync(
-        long? from = null,
-        long? to = null,
-        int count = 100,
-        int skip = 0,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Create a basal delivery from a Treatment (v1-v3 API ingest)
-    /// </summary>
-    /// <param name="treatment">Treatment to convert to a basal delivery state span</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Created state span</returns>
-    /// <exception cref="ArgumentException">Thrown when the treatment is not a valid temp basal treatment.</exception>
-    Task<StateSpan> CreateBasalDeliveryFromTreatmentAsync(
-        Treatment treatment,
         CancellationToken cancellationToken = default);
 
     /// <summary>

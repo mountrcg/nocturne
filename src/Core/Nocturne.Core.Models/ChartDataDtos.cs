@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Nocturne.Core.Models;
 
 /// <summary>
@@ -23,6 +25,7 @@ public class DashboardChartData
     public List<BolusMarkerDto> BolusMarkers { get; set; } = new();
     public List<CarbMarkerDto> CarbMarkers { get; set; } = new();
     public List<DeviceEventMarkerDto> DeviceEventMarkers { get; set; } = new();
+    public List<BgCheckMarkerDto> BgCheckMarkers { get; set; } = new();
 
     // === State spans ===
     public List<ChartStateSpanDto> PumpModeSpans { get; set; } = new();
@@ -72,6 +75,7 @@ public class GlucosePointDto
     public long Time { get; set; }
     public double Sgv { get; set; }
     public string? Direction { get; set; }
+    public string? DataSource { get; set; }
 }
 
 public class BolusMarkerDto
@@ -81,6 +85,7 @@ public class BolusMarkerDto
     public string? TreatmentId { get; set; }
     public BolusType BolusType { get; set; }
     public bool IsOverride { get; set; }
+    public string? DataSource { get; set; }
 }
 
 public class CarbMarkerDto
@@ -90,6 +95,7 @@ public class CarbMarkerDto
     public string? Label { get; set; }
     public string? TreatmentId { get; set; }
     public bool IsOffset { get; set; }
+    public string? DataSource { get; set; }
 }
 
 public class DeviceEventMarkerDto
@@ -97,7 +103,16 @@ public class DeviceEventMarkerDto
     public long Time { get; set; }
     public DeviceEventType EventType { get; set; }
     public string? Notes { get; set; }
+    public string? TreatmentId { get; set; }
     public ChartColor Color { get; set; }
+}
+
+public class BgCheckMarkerDto
+{
+    public long Time { get; set; }
+    public double Glucose { get; set; }
+    public string? GlucoseType { get; set; }
+    public string? TreatmentId { get; set; }
 }
 
 public class SystemEventMarkerDto
@@ -143,4 +158,37 @@ public class TrackerMarkerDto
     public long Time { get; set; }
     public string? Icon { get; set; }
     public ChartColor Color { get; set; }
+}
+
+/// <summary>
+/// What initiated the basal delivery rate.
+/// Used by the chart system to color and categorize basal delivery spans.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<BasalDeliveryOrigin>))]
+public enum BasalDeliveryOrigin
+{
+    /// <summary>
+    /// Closed-loop algorithm adjusted (CamAPS, Control-IQ, Loop)
+    /// </summary>
+    Algorithm,
+
+    /// <summary>
+    /// Pump's programmed basal schedule
+    /// </summary>
+    Scheduled,
+
+    /// <summary>
+    /// User-initiated temporary rate
+    /// </summary>
+    Manual,
+
+    /// <summary>
+    /// Delivery suspended (rate = 0)
+    /// </summary>
+    Suspended,
+
+    /// <summary>
+    /// Derived from profile when no pump data available
+    /// </summary>
+    Inferred
 }

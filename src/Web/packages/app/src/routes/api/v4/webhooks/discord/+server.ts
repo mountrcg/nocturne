@@ -1,0 +1,7 @@
+import type { RequestHandler } from "./$types";
+import { getBot } from "$lib/server/bot";
+
+export const POST: RequestHandler = async ({ request }) => {
+	const bot = getBot();
+	return bot.webhooks.discord(request);
+};

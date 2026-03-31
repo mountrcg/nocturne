@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { type Treatment, type BasalPoint } from "$lib/api";
-  import { TreatmentEditDialog } from "$lib/components/treatments";
-  import { updateTreatment } from "$lib/data/treatments.remote";
-  import { toast } from "svelte-sonner";
+  import { type BasalPoint, BasalDeliveryOrigin } from "$lib/api";
+  import type { EntryRecord } from "$lib/constants/entry-categories";
+  import { bg, bgLabel } from "$lib/utils/formatting";
+  import { EntryEditDialog } from "$lib/components/entries";
   import {
     Card,
     CardContent,
@@ -18,15 +18,19 @@
     ChartClipPath,
     Highlight,
     BrushContext,
+    Rect,
+    Rule,
   } from "layerchart";
   import MiniOverviewChart from "../MiniOverviewChart.svelte";
   import { bisector } from "d3";
   import { scaleTime, scaleLinear } from "d3-scale";
   import {
     getPredictions,
+    getPredictionStatus,
     type PredictionData,
-  } from "$lib/data/predictions.remote";
-  import { getChartData } from "$lib/data/chart-data.remote";
+  } from "$api/predictions.remote";
+  import { getChartData } from "$api/chart-data.remote";
+  import { getEntryByTreatmentId } from "$api/entries.remote";
   import {
     predictionMinutes,
     predictionEnabled,
@@ -34,7 +38,6 @@
     glucoseChartLookback,
     GLUCOSE_CHART_FETCH_HOURS,
   } from "$lib/stores/appearance-store.svelte";
-  import { bg } from "$lib/utils/formatting";
   import PredictionSettings from "../PredictionSettings.svelte";
 
   // Sub-components
@@ -42,6 +45,10 @@
   import ChartLegend from "./ChartLegend.svelte";
   import ChartTooltip from "./ChartTooltip.svelte";
   import TreatmentDisambiguationDialog from "./dialogs/TreatmentDisambiguationDialog.svelte";
+  import PointInspectionPicker from "./dialogs/PointInspectionPicker.svelte";
+  import GlucoseInspectionDialog from "./dialogs/GlucoseInspectionDialog.svelte";
+  import DeliveryInspectionDialog from "./dialogs/DeliveryInspectionDialog.svelte";
+  import TreatmentInspectionDialog from "./dialogs/TreatmentInspectionDialog.svelte";
   import BasalTrack from "./tracks/BasalTrack.svelte";
   import GlucoseTrack from "./tracks/GlucoseTrack.svelte";
   import IobCobTrack from "./tracks/IobCobTrack.svelte";
@@ -85,6 +92,9 @@
     initialChartData?: TransformedChartData | null;
     /** Promise for streamed historical data */
     streamedHistoricalData?: Promise<TransformedChartData | null>;
+    /** External prediction data (e.g. historical predictions from APS snapshots).
+     *  When provided, bypasses the internal live prediction fetch. */
+    externalPredictionData?: PredictionData | null;
   }
 
   const realtimeStore = getRealtimeStore();
@@ -112,6 +122,7 @@
     onSelectionChange,
     initialChartData,
     streamedHistoricalData,
+    externalPredictionData,
   }: ComponentProps = $props();
 
   // Selection mode is enabled when onSelectionChange callback is provided
@@ -120,6 +131,8 @@
   // ===== STATE =====
   let predictionData = $state<PredictionData | null>(null);
   let predictionError = $state<string | null>(null);
+  let predictionServiceAvailable = $state(true);
+  // svelte-ignore state_referenced_locally
   let serverChartData = $state<TransformedChartData | null>(
     initialChartData ?? null
   );
@@ -176,12 +189,40 @@
     }
   }
 
-  // Treatment edit dialog state
-  let selectedTreatment = $state<Treatment | null>(null);
-  let isTreatmentDialogOpen = $state(false);
-  let isUpdatingTreatment = $state(false);
-  let nearbyTreatments = $state<Treatment[]>([]);
+  // Entry edit dialog state
+  let selectedEntry = $state<EntryRecord | null>(null);
+  let correlatedRecords = $state<EntryRecord[]>([]);
+  let isEntryDialogOpen = $state(false);
+  let nearbyEntries = $state<EntryRecord[]>([]);
   let isDisambiguationOpen = $state(false);
+
+  // Point inspection state
+  let inspectionTimestamp = $state<Date | null>(null);
+  let inspectionGlucosePoint = $state<{
+    sgv: number;
+    direction?: string;
+    color: string;
+  } | null>(null);
+  let inspectionContext = $state<{
+    iob?: number;
+    cob?: number;
+    basalRate?: number;
+    scheduledBasalRate?: number;
+    basalOrigin?: BasalDeliveryOrigin;
+    pumpMode?: string;
+    overrideState?: string;
+    profileName?: string;
+    activityStates?: string[];
+    isStaleBasal: boolean;
+    nearbyBolus?: { insulin?: number; bolusType?: string; treatmentId?: string; dataSource?: string };
+    nearbyCarbs?: { carbs?: number; label?: string; treatmentId?: string; dataSource?: string };
+    previousGlucoseValue?: number;
+    dataSource?: string;
+  } | null>(null);
+  let isPickerOpen = $state(false);
+  let isGlucoseInspectionOpen = $state(false);
+  let isDeliveryInspectionOpen = $state(false);
+  let isTreatmentInspectionOpen = $state(false);
 
   // ===== DERIVED VALUES =====
   const isBrowser = typeof window !== "undefined";
@@ -189,6 +230,10 @@
   const displayDemoMode = $derived(demoMode ?? realtimeStore.demoMode);
   const lookbackHours = $derived(
     defaultFocusHours ?? glucoseChartLookback.current
+  );
+  const hasExternalPredictions = $derived(externalPredictionData !== undefined);
+  const effectiveShowPredictions = $derived(
+    showPredictions && (predictionServiceAvailable || hasExternalPredictions)
   );
 
   function normalizeDate(
@@ -220,7 +265,7 @@
 
   const displayDateRangeWithPredictions = $derived({
     from: displayDateRange.from,
-    to: showPredictions
+    to: effectiveShowPredictions
       ? new Date(
           displayDateRange.to.getTime() + predictionMinutes.current * 60 * 1000
         )
@@ -238,16 +283,24 @@
     }
   }
 
-  // Prediction fetch
+  // Sync external prediction data when provided
+  $effect(() => {
+    if (hasExternalPredictions) {
+      predictionData = externalPredictionData ?? null;
+      predictionError = null;
+    }
+  });
+
+  // Prediction fetch (skipped when external predictions are provided)
   const predictionFetchTrigger = $derived.by(() => {
-    if (!isBrowser) return null;
+    if (!isBrowser || hasExternalPredictions) return null;
     const enabled = predictionEnabled.current;
     const latestEntryMills =
       serverChartData?.glucoseData?.[
         serverChartData.glucoseData.length - 1
       ]?.time?.getTime() ?? 0;
     if (
-      !showPredictions ||
+      !effectiveShowPredictions ||
       !enabled ||
       !serverChartData?.glucoseData?.length ||
       latestEntryMills === 0
@@ -353,13 +406,36 @@
     };
   });
 
+  // Check prediction service availability on mount
+  $effect(() => {
+    if (!isBrowser) return;
+
+    let cancelled = false;
+    getPredictionStatus({})
+      .then((status) => {
+        if (!cancelled) {
+          predictionServiceAvailable = status.available;
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn("Failed to check prediction service status:", err);
+          predictionServiceAvailable = false;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  });
+
   // Prediction and chart domains
   const predictionHours = $derived(predictionMinutes.current / 60);
 
   const fullXDomain = $derived({
     from: fullDataRange.from,
     to:
-      showPredictions && predictionData
+      effectiveShowPredictions && predictionData
         ? new Date(
             fullDataRange.to.getTime() + predictionHours * 60 * 60 * 1000
           )
@@ -370,7 +446,7 @@
     from: brushXDomain?.[0] ?? displayDateRange.from,
     to:
       brushXDomain?.[1] ??
-      (showPredictions && predictionData
+      (effectiveShowPredictions && predictionData
         ? new Date(
             displayDateRange.to.getTime() + predictionHours * 60 * 60 * 1000
           )
@@ -699,29 +775,29 @@
   ): T | undefined {
     if (!series || series.length === 0) return undefined;
     const timeMs = time.getTime();
-    const i = bisectTimestamp(series, { timestamp: timeMs }, 1);
+    const i = bisectTimestamp(series, timeMs, 1);
     return series[i - 1];
   }
 
-  // Treatment handling — look up treatment by ID from realtime store
+  // Entry handling — look up v4 records by marker treatmentId from realtime store
   const TREATMENT_PROXIMITY_MS = 5 * 60 * 1000;
 
-  function findTreatmentById(treatmentId: string): Treatment | undefined {
-    return (realtimeStore.treatments as Treatment[]).find(
-      (t) => t._id === treatmentId
-    );
-  }
-
-  function findAllNearbyTreatments(time: Date): Treatment[] {
-    const nearby: Treatment[] = [];
+  function findAllNearbyEntries(time: Date): EntryRecord[] {
+    const nearby: EntryRecord[] = [];
+    const seen = new Set<string>();
 
     for (const marker of bolusMarkers) {
       if (
         Math.abs(marker.time.getTime() - time.getTime()) <
         TREATMENT_PROXIMITY_MS
       ) {
-        const t = findTreatmentById(marker.treatmentId ?? "");
-        if (t && !nearby.some((n) => n._id === t._id)) nearby.push(t);
+        const entry = realtimeStore.findEntryByTreatmentId(
+          marker.treatmentId ?? ""
+        );
+        if (entry && entry.data.id && !seen.has(entry.data.id)) {
+          seen.add(entry.data.id);
+          nearby.push(entry);
+        }
       }
     }
 
@@ -730,53 +806,68 @@
         Math.abs(marker.time.getTime() - time.getTime()) <
         TREATMENT_PROXIMITY_MS
       ) {
-        const t = findTreatmentById(marker.treatmentId ?? "");
-        if (t && !nearby.some((n) => n._id === t._id)) nearby.push(t);
+        const entry = realtimeStore.findEntryByTreatmentId(
+          marker.treatmentId ?? ""
+        );
+        if (entry && entry.data.id && !seen.has(entry.data.id)) {
+          seen.add(entry.data.id);
+          nearby.push(entry);
+        }
+      }
+    }
+
+    for (const marker of deviceEventMarkers) {
+      if (
+        Math.abs(marker.time.getTime() - time.getTime()) <
+        TREATMENT_PROXIMITY_MS
+      ) {
+        const entry = realtimeStore.findEntryByTreatmentId(
+          marker.treatmentId ?? ""
+        );
+        if (entry && entry.data.id && !seen.has(entry.data.id)) {
+          seen.add(entry.data.id);
+          nearby.push(entry);
+        }
       }
     }
 
     return nearby;
   }
 
-  function handleMarkerClick(treatmentId: string) {
-    const treatment = findTreatmentById(treatmentId);
-    if (!treatment) return;
+  async function handleMarkerClick(treatmentId: string) {
+    // Fast path: check in-memory store first
+    let entry: EntryRecord | null = realtimeStore.findEntryByTreatmentId(treatmentId) ?? null;
 
-    const time = new Date(
-      treatment.mills ??
-        (treatment.created_at ? new Date(treatment.created_at).getTime() : 0)
-    );
-    const nearby = findAllNearbyTreatments(time);
+    // Slow path: fetch from API via remote function
+    if (!entry) {
+      const result = await getEntryByTreatmentId({ treatmentId });
+      entry = result as EntryRecord | null;
+    }
+
+    if (!entry) {
+      console.warn(`[GlucoseChart] No entry found for treatmentId: ${treatmentId}`);
+      return;
+    }
+
+    const time = new Date(entry.data.mills ?? 0);
+    const nearby = findAllNearbyEntries(time);
 
     if (nearby.length <= 1) {
-      selectedTreatment = treatment;
-      isTreatmentDialogOpen = true;
+      selectedEntry = entry;
+      correlatedRecords = realtimeStore.findCorrelatedEntries(entry);
+      isEntryDialogOpen = true;
     } else {
-      nearbyTreatments = nearby;
+      nearbyEntries = nearby;
       isDisambiguationOpen = true;
     }
   }
 
-  function selectTreatmentFromList(treatment: Treatment) {
+  function selectEntryFromList(entry: EntryRecord) {
     isDisambiguationOpen = false;
-    nearbyTreatments = [];
-    selectedTreatment = treatment;
-    isTreatmentDialogOpen = true;
-  }
-
-  async function handleTreatmentSave(updatedTreatment: Treatment) {
-    isUpdatingTreatment = true;
-    try {
-      await updateTreatment({ ...updatedTreatment });
-      toast.success("Treatment updated");
-      isTreatmentDialogOpen = false;
-      selectedTreatment = null;
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to update treatment");
-    } finally {
-      isUpdatingTreatment = false;
-    }
+    nearbyEntries = [];
+    selectedEntry = entry;
+    correlatedRecords = realtimeStore.findCorrelatedEntries(entry);
+    isEntryDialogOpen = true;
   }
 
   // Tooltip finders
@@ -844,6 +935,164 @@
         Math.abs(event.time.getTime() - time.getTime()) < TREATMENT_PROXIMITY_MS
     );
   }
+
+  // ===== POINT INSPECTION =====
+  function handlePointClick(data: { time: Date; sgv: number; color: string; dataSource?: string }) {
+    openInspection(data.time, { sgv: data.sgv, color: data.color }, data.dataSource);
+  }
+
+  function handleTrackPointClick(time: Date) {
+    // Find nearest glucose point for the clicked time
+    const nearest = findSeriesValue(glucoseData, time);
+    const glucosePoint = nearest
+      ? { sgv: nearest.sgv, color: nearest.color }
+      : { sgv: 0, color: "var(--color-muted)" };
+    openInspection(time, glucosePoint, nearest?.dataSource);
+  }
+
+  function openInspection(
+    time: Date,
+    glucosePoint: { sgv: number; color: string },
+    dataSource?: string
+  ) {
+    inspectionTimestamp = time;
+    inspectionGlucosePoint = glucosePoint;
+
+    // Gather context at click time using existing finders
+    const basal = findBasalValue(basalData, time) as BasalPoint | undefined;
+    const iobVal = findSeriesValue(iobData, time);
+    const cobVal = findSeriesValue(cobData, time);
+    const pumpMode = findActivePumpMode(time);
+    const override = findActiveOverride(time);
+    const profile = findActiveProfile(time);
+    const activities = findActiveActivities(time);
+    const basalDelivery = findActiveBasalDelivery(time);
+    const nearbyBol = findNearbyBolus(time);
+    const nearbyCarb = findNearbyCarbs(time);
+
+    // Find previous glucose reading for delta
+    const idx = bisectDate(glucoseData, time, 1);
+    const prevPoint = idx >= 2 ? glucoseData[idx - 2] : undefined;
+
+    // Check stale basal
+    const isStale = staleBasalData
+      ? time.getTime() >= staleBasalData.start.getTime() &&
+        time.getTime() <= staleBasalData.end.getTime()
+      : false;
+
+    inspectionContext = {
+      iob: iobVal?.value,
+      cob: cobVal?.value,
+      basalRate: basal?.rate ?? basalDelivery?.rate,
+      scheduledBasalRate: basal?.scheduledRate,
+      basalOrigin: basal?.origin ?? basalDelivery?.origin,
+      pumpMode: pumpMode?.state,
+      overrideState: override?.state,
+      profileName: profile?.state,
+      activityStates: activities?.map((a) => a.state ?? "").filter(Boolean),
+      isStaleBasal: isStale,
+      nearbyBolus: nearbyBol
+        ? {
+            insulin: nearbyBol.insulin,
+            bolusType: nearbyBol.bolusType,
+            treatmentId: nearbyBol.treatmentId,
+            dataSource: nearbyBol.dataSource,
+          }
+        : undefined,
+      nearbyCarbs: nearbyCarb
+        ? {
+            carbs: nearbyCarb.carbs,
+            label: nearbyCarb.label,
+            treatmentId: nearbyCarb.treatmentId,
+            dataSource: nearbyCarb.dataSource,
+          }
+        : undefined,
+      previousGlucoseValue: prevPoint?.sgv,
+      dataSource,
+    };
+
+    // Determine available contexts
+    const hasDelivery = basal != null || basalDelivery != null;
+    const hasTreatment = nearbyBol != null || nearbyCarb != null;
+
+    if (!hasDelivery && !hasTreatment) {
+      // Only glucose context — open directly
+      isGlucoseInspectionOpen = true;
+    } else {
+      // Multiple contexts — show picker
+      isPickerOpen = true;
+    }
+  }
+
+  function handleInspectionSelect(type: "glucose" | "delivery" | "treatment") {
+    isPickerOpen = false;
+    switch (type) {
+      case "glucose":
+        isGlucoseInspectionOpen = true;
+        break;
+      case "delivery":
+        isDeliveryInspectionOpen = true;
+        break;
+      case "treatment":
+        isTreatmentInspectionOpen = true;
+        break;
+    }
+  }
+
+  function closeAllInspections() {
+    isPickerOpen = false;
+    isGlucoseInspectionOpen = false;
+    isDeliveryInspectionOpen = false;
+    isTreatmentInspectionOpen = false;
+    inspectionTimestamp = null;
+    inspectionGlucosePoint = null;
+    inspectionContext = null;
+  }
+
+  // Build picker options from context
+  const inspectionPickerOptions = $derived.by(() => {
+    if (!inspectionContext || !inspectionGlucosePoint) return [];
+    const opts: {
+      type: "glucose" | "delivery" | "treatment";
+      label: string;
+      preview: string;
+    }[] = [];
+
+    opts.push({
+      type: "glucose",
+      label: "Glucose",
+      preview: `${bg(inspectionGlucosePoint.sgv)} ${bgLabel()}`,
+    });
+
+    const hasDelivery =
+      inspectionContext.basalRate != null;
+    if (hasDelivery) {
+      const rate = inspectionContext.basalRate ?? 0;
+      const mode = inspectionContext.pumpMode ?? "Basal";
+      opts.push({
+        type: "delivery",
+        label: "Delivery",
+        preview: `${mode}, ${rate.toFixed(2)} U/hr`,
+      });
+    }
+
+    if (inspectionContext.nearbyBolus || inspectionContext.nearbyCarbs) {
+      const parts: string[] = [];
+      if (inspectionContext.nearbyBolus?.insulin) {
+        parts.push(`${inspectionContext.nearbyBolus.insulin.toFixed(1)}U`);
+      }
+      if (inspectionContext.nearbyCarbs?.carbs) {
+        parts.push(`${inspectionContext.nearbyCarbs.carbs}g`);
+      }
+      opts.push({
+        type: "treatment",
+        label: "Treatment",
+        preview: parts.join(" + ") || "Treatment",
+      });
+    }
+
+    return opts;
+  });
 </script>
 
 {#snippet chartBody()}
@@ -927,6 +1176,7 @@
             {basalAxisScale}
             {context}
             {showBasal}
+            onPointClick={handleTrackPointClick}
           />
         </ChartClipPath>
 
@@ -951,13 +1201,30 @@
           {highThreshold}
           {lowThreshold}
           contextWidth={context.width}
-          {showPredictions}
+          showPredictions={effectiveShowPredictions}
           {predictionData}
           predictionEnabled={predictionEnabled.current}
           predictionDisplayMode={predictionDisplayMode.current}
           {predictionError}
           {chartXDomain}
+          onPointClick={handlePointClick}
         />
+
+        <!-- IOB/COB track separator and background -->
+        {#if trackConfig.showIobTrack}
+          <Rect
+            x={0}
+            y={iobTrackTop}
+            width={context.width}
+            height={iobTrackHeight}
+            class="fill-muted/6"
+          />
+          <Rule
+            y={pixelToGlucoseDomain(glucoseTrackBottom)}
+            class="stroke-border/50"
+            stroke-width="0.5"
+          />
+        {/if}
 
         <!-- IOB/COB Track -->
         <IobCobTrack
@@ -977,6 +1244,7 @@
           {context}
           onMarkerClick={handleMarkerClick}
           {showIobTrack}
+          onPointClick={handleTrackPointClick}
         />
 
         <!-- X-Axis -->
@@ -997,6 +1265,8 @@
                 {yPos}
                 eventType={marker.eventType}
                 color={marker.color}
+                treatmentId={marker.treatmentId ?? undefined}
+                onMarkerClick={handleMarkerClick}
               />
             {/each}
           {/if}
@@ -1036,12 +1306,12 @@
             <Highlight
               x={(d) => d.time}
               y={(d) => {
-                const basalDelivery = findActiveBasalDelivery(d.time);
-                if (basalDelivery) {
-                  return basalScale(basalDelivery.rate ?? 0);
-                }
                 const basal = findBasalValue(basalData, d.time);
-                return basalScale(basal?.rate ?? 0);
+                if (basal) {
+                  return basalScale(basal.rate ?? 0);
+                }
+                const basalDelivery = findActiveBasalDelivery(d.time);
+                return basalScale(basalDelivery?.rate ?? 0);
               }}
               points={{ class: "fill-insulin-basal" }}
             />
@@ -1132,7 +1402,7 @@
 
         <div class="flex items-center gap-2">
           <PredictionSettings
-            {showPredictions}
+            showPredictions={effectiveShowPredictions}
             predictionMode={predictionModeValue}
             onPredictionModeChange={handlePredictionModeChange}
           />
@@ -1151,10 +1421,10 @@
       <!-- Mini Overview Chart -->
       {#if glucoseData.length > 0}
         {@const miniPredictionData =
-          showPredictions && predictionData?.curves?.main
+          effectiveShowPredictions && predictionData?.curves?.main
             ? predictionData.curves.main.map((p) => ({
                 time: new Date(p.timestamp),
-                value: Number(bg(p.value)),
+                value: p.value,
               }))
             : null}
         {@const miniSelectedDomain: [Date, Date] = brushXDomain ?? [
@@ -1171,7 +1441,8 @@
           lowThreshold={Number(lowThreshold)}
           onSelectionChange={(domain) => handleMiniChartBrush(domain)}
           predictionData={miniPredictionData}
-          showPredictions={showPredictions && predictionEnabled.current}
+          showPredictions={effectiveShowPredictions &&
+            predictionEnabled.current}
         />
       {/if}
 
@@ -1222,25 +1493,133 @@
   </Card>
 {/if}
 
-<!-- Treatment Edit Dialog -->
-<TreatmentEditDialog
-  bind:open={isTreatmentDialogOpen}
-  treatment={selectedTreatment}
-  isLoading={isUpdatingTreatment}
+<!-- Entry Edit Dialog -->
+<EntryEditDialog
+  bind:open={isEntryDialogOpen}
+  entry={selectedEntry}
+  {correlatedRecords}
   onClose={() => {
-    isTreatmentDialogOpen = false;
-    selectedTreatment = null;
+    isEntryDialogOpen = false;
+    selectedEntry = null;
+    correlatedRecords = [];
   }}
-  onSave={handleTreatmentSave}
 />
 
 <!-- Disambiguation Dialog -->
 <TreatmentDisambiguationDialog
   bind:open={isDisambiguationOpen}
-  treatments={nearbyTreatments}
-  onSelect={selectTreatmentFromList}
+  entries={nearbyEntries}
+  onSelect={selectEntryFromList}
   onClose={() => {
     isDisambiguationOpen = false;
-    nearbyTreatments = [];
+    nearbyEntries = [];
   }}
 />
+
+<!-- Point Inspection Picker -->
+<PointInspectionPicker
+  bind:open={isPickerOpen}
+  options={inspectionPickerOptions}
+  onSelect={handleInspectionSelect}
+  onClose={closeAllInspections}
+/>
+
+<!-- Inspection Dialogs -->
+{#if inspectionTimestamp && inspectionGlucosePoint && inspectionContext}
+  <GlucoseInspectionDialog
+    bind:open={isGlucoseInspectionOpen}
+    timestamp={inspectionTimestamp}
+    glucoseValue={inspectionGlucosePoint.sgv}
+    glucoseColor={inspectionGlucosePoint.color}
+    previousGlucoseValue={inspectionContext.previousGlucoseValue}
+    dataSource={inspectionContext.dataSource}
+    {glucoseData}
+    {highThreshold}
+    {lowThreshold}
+    iob={inspectionContext.iob}
+    cob={inspectionContext.cob}
+    basalRate={inspectionContext.basalRate}
+    scheduledBasalRate={inspectionContext.scheduledBasalRate}
+    basalOrigin={inspectionContext.basalOrigin}
+    pumpMode={inspectionContext.pumpMode}
+    overrideState={inspectionContext.overrideState}
+    profileName={inspectionContext.profileName}
+    activityStates={inspectionContext.activityStates}
+    hasDeliveryContext={inspectionContext.basalRate != null}
+    hasTreatmentContext={inspectionContext.nearbyBolus != null || inspectionContext.nearbyCarbs != null}
+    onClose={closeAllInspections}
+    onNavigateDelivery={() => {
+      isGlucoseInspectionOpen = false;
+      isDeliveryInspectionOpen = true;
+    }}
+    onNavigateTreatment={() => {
+      isGlucoseInspectionOpen = false;
+      isTreatmentInspectionOpen = true;
+    }}
+  />
+
+  <DeliveryInspectionDialog
+    bind:open={isDeliveryInspectionOpen}
+    timestamp={inspectionTimestamp}
+    basalRate={inspectionContext.basalRate}
+    scheduledBasalRate={inspectionContext.scheduledBasalRate}
+    basalOrigin={inspectionContext.basalOrigin}
+    pumpMode={inspectionContext.pumpMode}
+    overrideState={inspectionContext.overrideState}
+    profileName={inspectionContext.profileName}
+    activityStates={inspectionContext.activityStates}
+    iob={inspectionContext.iob}
+    isStaleBasal={inspectionContext.isStaleBasal}
+    dataSource={inspectionContext.dataSource}
+    {glucoseData}
+    {highThreshold}
+    {lowThreshold}
+    hasGlucoseContext={true}
+    hasTreatmentContext={inspectionContext.nearbyBolus != null || inspectionContext.nearbyCarbs != null}
+    onClose={closeAllInspections}
+    onNavigateGlucose={() => {
+      isDeliveryInspectionOpen = false;
+      isGlucoseInspectionOpen = true;
+    }}
+    onNavigateTreatment={() => {
+      isDeliveryInspectionOpen = false;
+      isTreatmentInspectionOpen = true;
+    }}
+  />
+
+  <TreatmentInspectionDialog
+    bind:open={isTreatmentInspectionOpen}
+    timestamp={inspectionTimestamp}
+    bolusInsulin={inspectionContext.nearbyBolus?.insulin}
+    bolusType={inspectionContext.nearbyBolus?.bolusType}
+    bolusDataSource={inspectionContext.nearbyBolus?.dataSource}
+    carbGrams={inspectionContext.nearbyCarbs?.carbs}
+    carbLabel={inspectionContext.nearbyCarbs?.label}
+    carbDataSource={inspectionContext.nearbyCarbs?.dataSource}
+    iob={inspectionContext.iob}
+    cob={inspectionContext.cob}
+    glucoseValue={inspectionGlucosePoint.sgv}
+    {glucoseData}
+    {highThreshold}
+    {lowThreshold}
+    hasGlucoseContext={true}
+    hasDeliveryContext={inspectionContext.basalRate != null}
+    onClose={closeAllInspections}
+    onNavigateGlucose={() => {
+      isTreatmentInspectionOpen = false;
+      isGlucoseInspectionOpen = true;
+    }}
+    onNavigateDelivery={() => {
+      isTreatmentInspectionOpen = false;
+      isDeliveryInspectionOpen = true;
+    }}
+    onEditEntry={() => {
+      isTreatmentInspectionOpen = false;
+      if (inspectionContext?.nearbyBolus?.treatmentId) {
+        handleMarkerClick(inspectionContext.nearbyBolus.treatmentId);
+      } else if (inspectionContext?.nearbyCarbs?.treatmentId) {
+        handleMarkerClick(inspectionContext.nearbyCarbs.treatmentId);
+      }
+    }}
+  />
+{/if}

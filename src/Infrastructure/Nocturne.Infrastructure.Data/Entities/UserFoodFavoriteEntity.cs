@@ -7,8 +7,14 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// PostgreSQL entity for user food favorites.
 /// </summary>
 [Table("user_food_favorites")]
-public class UserFoodFavoriteEntity
+public class UserFoodFavoriteEntity : ITenantScoped
 {
+    /// <summary>
+    /// The unique identifier of the tenant this record belongs to.
+    /// </summary>
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
+
     /// <summary>
     /// Primary key - UUID Version 7 for time-ordered, globally unique identification
     /// </summary>

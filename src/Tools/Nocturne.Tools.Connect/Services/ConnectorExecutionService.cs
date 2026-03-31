@@ -23,10 +23,13 @@ namespace Nocturne.Tools.Connect.Services;
 public class ConnectorExecutionService(
     ILogger<ConnectorExecutionService> logger,
     ILoggerFactory loggerFactory,
-    DaemonStatusService? daemonStatusService = null)
+    DaemonStatusService? daemonStatusService = null
+)
 {
-    private readonly ILogger<ConnectorExecutionService> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    private readonly ILoggerFactory _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
+    private readonly ILogger<ConnectorExecutionService> _logger =
+        logger ?? throw new ArgumentNullException(nameof(logger));
+    private readonly ILoggerFactory _loggerFactory =
+        loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
 
     // Optional dependency
 
@@ -325,7 +328,7 @@ public class ConnectorExecutionService(
             {
                 DataTypes = connector.SupportedDataTypes,
                 From = DateTime.UtcNow.AddHours(-3), // Default 3-hour lookback
-                To = DateTime.UtcNow
+                To = DateTime.UtcNow,
             };
 
             var result = await connector.SyncDataAsync(request, config, CancellationToken.None);
@@ -377,11 +380,12 @@ public class ConnectorExecutionService(
                     Username = config.MyLifeUsername ?? string.Empty,
                     Password = config.MyLifePassword ?? string.Empty,
                     PatientId = config.MyLifePatientId ?? string.Empty,
-                    EnableGlucoseSync = config.MyLifeEnableGlucoseSync,
-                    EnableManualBgSync = config.MyLifeEnableManualBgSync,
+                    SyncGlucose = config.MyLifeEnableGlucoseSync,
+                    SyncManualBG = config.MyLifeEnableManualBgSync,
                     EnableMealCarbConsolidation = config.MyLifeEnableMealCarbConsolidation,
                     EnableTempBasalConsolidation = config.MyLifeEnableTempBasalConsolidation,
-                    TempBasalConsolidationWindowMinutes = config.MyLifeTempBasalConsolidationWindowMinutes,
+                    TempBasalConsolidationWindowMinutes =
+                        config.MyLifeTempBasalConsolidationWindowMinutes,
                 },
                 _ => null,
             };
@@ -450,8 +454,7 @@ public class ConnectorExecutionService(
                 _loggerFactory.CreateLogger<ProductionRateLimitingStrategy>()
             ),
             tokenProvider,
-            new TreatmentClassificationService(),
-            null  // IConnectorPublisher
+            null // IConnectorPublisher
         );
         return new ConnectorServiceWrapper<GlookoConnectorConfiguration>(service);
     }
@@ -474,7 +477,7 @@ public class ConnectorExecutionService(
                 _loggerFactory.CreateLogger<ProductionRateLimitingStrategy>()
             ),
             tokenProvider,
-            null  // IConnectorPublisher
+            null // IConnectorPublisher
         );
         return new ConnectorServiceWrapper<DexcomConnectorConfiguration>(service);
     }
@@ -498,7 +501,7 @@ public class ConnectorExecutionService(
                 _loggerFactory.CreateLogger<ProductionRateLimitingStrategy>()
             ),
             tokenProvider,
-            null  // IConnectorPublisher
+            null // IConnectorPublisher
         );
         return new ConnectorServiceWrapper<LibreLinkUpConnectorConfiguration>(service);
     }
@@ -521,26 +524,22 @@ public class ConnectorExecutionService(
         );
         var eventsCache = new MyLifeEventsCache(
             sessionStore,
-            new MyLifeSyncService(
-                soapClient,
-                _loggerFactory.CreateLogger<MyLifeSyncService>()
-            ),
+            new MyLifeSyncService(soapClient, _loggerFactory.CreateLogger<MyLifeSyncService>()),
             _loggerFactory.CreateLogger<MyLifeEventsCache>()
         );
-        var mapper = new MyLifeEventProcessor();
+        var eventProcessor = new MyLifeEventProcessor();
         var service = new MyLifeConnectorService(
             new HttpClient(),
             Options.Create(config),
             _loggerFactory.CreateLogger<MyLifeConnectorService>(),
             tokenProvider,
             eventsCache,
-            mapper,
+            eventProcessor,
             sessionStore,
             null
         );
         return new ConnectorServiceWrapper<MyLifeConnectorConfiguration>(service);
     }
-
 }
 
 /// <summary>
@@ -568,8 +567,9 @@ internal class ConnectorServiceWrapper<TConfig> : IConnectorService<IConnectorCo
     public Task<SyncResult> SyncDataAsync(
         SyncRequest request,
         IConnectorConfiguration config,
-        CancellationToken cancellationToken
-    ) => _innerService.SyncDataAsync(request, (TConfig)config, cancellationToken);
+        CancellationToken cancellationToken,
+        ISyncProgressReporter? progressReporter = null
+    ) => _innerService.SyncDataAsync(request, (TConfig)config, cancellationToken, progressReporter);
 
     public void Dispose() => _innerService.Dispose();
 }

@@ -103,6 +103,13 @@ jobs:
             -p:ContainerRepository=${{ env.IMAGE_REPOSITORY }}/nocturne-api \
             -p:ContainerImageTag=${{ steps.version.outputs.version }}
 
+      # Generate API client, Zod schemas, and remote functions for the web build.
+      # These files are gitignored (regenerated on every build) so we must produce
+      # them here before the Docker build which needs them.
+      - name: Generate API client for web build
+        working-directory: src/API/Nocturne.API
+        run: dotnet build -c Release
+
       # Build web app using standard Docker build (Node.js/Vite apps don't use .NET container publishing)
       - name: Build and push Nocturne.Web container
         if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
@@ -125,8 +132,9 @@ jobs:
           # Install dependencies
           RUN pnpm install --frozen-lockfile
 
-          # Build bridge package first (required by app)
+          # Build workspace packages required by app
           RUN pnpm --filter @nocturne/bridge run build
+          RUN pnpm --filter @nocturne/bot run build
 
           # Set default build-time environment variables for SvelteKit
           ENV PUBLIC_API_URL=http://localhost:1612
@@ -376,6 +384,13 @@ jobs:
       - name: Build bridge package
         working-directory: src/Web/packages/bridge
         run: pnpm run build
+
+      - name: Build bot package
+        working-directory: src/Web/packages/bot
+        run: pnpm run build
+
+      - name: Build solution
+        run: dotnet build -c Debug
 
       - name: Determine version tag
         id: version

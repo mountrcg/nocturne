@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Nocturne.API.Extensions;
 using Nocturne.Core.Constants;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Multitenancy;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Cache.Abstractions;
 using Nocturne.Infrastructure.Data;
@@ -21,15 +22,22 @@ public class StatusService : IStatusService
     private readonly ICacheService _cacheService;
     private readonly IDemoModeService _demoModeService;
     private readonly NocturneDbContext _dbContext;
+    private readonly IDbContextFactory<NocturneDbContext> _dbContextFactory;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly ITenantAccessor _tenantAccessor;
     private readonly ILogger<StatusService> _logger;
+
+    private string TenantCacheId => _tenantAccessor.Context?.TenantId.ToString()
+        ?? throw new InvalidOperationException("Tenant context is not resolved");
 
     public StatusService(
         IConfiguration configuration,
         ICacheService cacheService,
         IDemoModeService demoModeService,
         NocturneDbContext dbContext,
+        IDbContextFactory<NocturneDbContext> dbContextFactory,
         IHttpContextAccessor httpContextAccessor,
+        ITenantAccessor tenantAccessor,
         ILogger<StatusService> logger
     )
     {
@@ -37,7 +45,9 @@ public class StatusService : IStatusService
         _cacheService = cacheService;
         _demoModeService = demoModeService;
         _dbContext = dbContext;
+        _dbContextFactory = dbContextFactory;
         _httpContextAccessor = httpContextAccessor;
+        _tenantAccessor = tenantAccessor;
         _logger = logger;
     }
 
@@ -48,7 +58,7 @@ public class StatusService : IStatusService
     {
         // Include demo mode in cache key to ensure correct status is returned
         var demoSuffix = _demoModeService.IsEnabled ? ":demo" : "";
-        var cacheKey = "status:system" + demoSuffix;
+        var cacheKey = $"status:system:{TenantCacheId}" + demoSuffix;
         var cacheTtl = TimeSpan.FromMinutes(2);
 
         var cachedStatus = await _cacheService.GetAsync<StatusResponse>(cacheKey);
@@ -327,6 +337,7 @@ public class StatusService : IStatusService
 
         // Auth settings
         settings["authDefaultRoles"] = _configuration["Auth:DefaultRoles"] ?? "readable";
+        settings["requireAuthentication"] = _configuration.GetValue<bool>("Security:RequireAuthentication", false);
 
         // Threshold values
         settings["thresholds"] = new Dictionary<string, object>
@@ -476,136 +487,87 @@ public class StatusService : IStatusService
 
         var serverTime = DateTime.UtcNow;
 
-        var entriesTask = _dbContext
-            .Entries.AsNoTracking()
+        // Each query gets its own short-lived DbContext via the factory so they can
+        // run concurrently — a single DbContext is not thread-safe.
+        var entriesTask = LastModifiedAsync(ctx => ctx.Entries.AsNoTracking()
             .OrderByDescending(e => e.SysUpdatedAt)
             .Select(e => (DateTime?)e.SysUpdatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync());
 
-        var treatmentsTask = _dbContext
-            .Treatments.AsNoTracking()
+        var treatmentsTask = LastModifiedAsync(ctx => ctx.Treatments.AsNoTracking()
             .OrderByDescending(t => t.SysUpdatedAt)
             .Select(t => (DateTime?)t.SysUpdatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync());
 
-        var profileTask = _dbContext
-            .Profiles.AsNoTracking()
+        var profileTask = LastModifiedAsync(ctx => ctx.Profiles.AsNoTracking()
             .OrderByDescending(p => p.UpdatedAtPg)
             .Select(p => (DateTime?)p.UpdatedAtPg)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync());
 
-        var deviceStatusTask = _dbContext
-            .DeviceStatuses.AsNoTracking()
+        var deviceStatusTask = LastModifiedAsync(ctx => ctx.DeviceStatuses.AsNoTracking()
             .OrderByDescending(d => d.SysUpdatedAt)
             .Select(d => (DateTime?)d.SysUpdatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync());
 
-        var foodTask = _dbContext
-            .Foods.AsNoTracking()
+        var foodTask = LastModifiedAsync(ctx => ctx.Foods.AsNoTracking()
             .OrderByDescending(f => f.SysUpdatedAt)
             .Select(f => (DateTime?)f.SysUpdatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync());
 
-        var settingsTask = _dbContext
-            .Settings.AsNoTracking()
+        var settingsTask = LastModifiedAsync(ctx => ctx.Settings.AsNoTracking()
             .OrderByDescending(s => s.SrvModified ?? s.SysUpdatedAt)
             .Select(s =>
-                (DateTime?)(
-                    s.SrvModified.HasValue ? s.SrvModified.Value.UtcDateTime : s.SysUpdatedAt
-                )
-            )
-            .FirstOrDefaultAsync();
+                (DateTime?)(s.SrvModified.HasValue ? s.SrvModified.Value.UtcDateTime : s.SysUpdatedAt))
+            .FirstOrDefaultAsync());
 
-        var activityTask = _dbContext
-            .Activities.AsNoTracking()
+        var activityTask = LastModifiedAsync(ctx => ctx.Activities.AsNoTracking()
             .OrderByDescending(a => a.SysUpdatedAt)
             .Select(a => (DateTime?)a.SysUpdatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync());
 
-        var authSubjectsTask = _dbContext
-            .Subjects.AsNoTracking()
+        var authSubjectsTask = LastModifiedAsync(ctx => ctx.Subjects.AsNoTracking()
             .OrderByDescending(s => s.UpdatedAt)
             .Select(s => (DateTime?)s.UpdatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync());
 
-        var roleTask = _dbContext
-            .Roles.AsNoTracking()
+        var roleTask = LastModifiedAsync(ctx => ctx.Roles.AsNoTracking()
             .OrderByDescending(r => r.UpdatedAt)
             .Select(r => (DateTime?)r.UpdatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync());
 
-        var oidcProviderTask = _dbContext
-            .OidcProviders.AsNoTracking()
+        var oidcProviderTask = LastModifiedAsync(ctx => ctx.OidcProviders.AsNoTracking()
             .OrderByDescending(p => p.UpdatedAt)
             .Select(p => (DateTime?)p.UpdatedAt)
-            .FirstOrDefaultAsync();
-
-        var notificationPreferencesTask = _dbContext
-            .NotificationPreferences.AsNoTracking()
-            .OrderByDescending(p => p.UpdatedAt)
-            .Select(p => (DateTime?)p.UpdatedAt)
-            .FirstOrDefaultAsync();
-
-        var alertRulesTask = _dbContext
-            .AlertRules.AsNoTracking()
-            .OrderByDescending(a => a.UpdatedAt)
-            .Select(a => (DateTime?)a.UpdatedAt)
-            .FirstOrDefaultAsync();
-
-        var alertHistoryTask = _dbContext
-            .AlertHistory.AsNoTracking()
-            .OrderByDescending(h => h.UpdatedAt)
-            .Select(h => (DateTime?)h.UpdatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync());
 
         await Task.WhenAll(
-            entriesTask,
-            treatmentsTask,
-            profileTask,
-            deviceStatusTask,
-            foodTask,
-            settingsTask,
-            activityTask,
-            authSubjectsTask,
-            roleTask,
-            oidcProviderTask,
-            notificationPreferencesTask,
-            alertRulesTask,
-            alertHistoryTask
-        );
+            entriesTask, treatmentsTask, profileTask, deviceStatusTask,
+            foodTask, settingsTask, activityTask, authSubjectsTask,
+            roleTask, oidcProviderTask);
 
         var additional = new Dictionary<string, DateTime>();
 
         var authLastModified = GetMostRecentTimestamp(
-            authSubjectsTask.Result,
-            roleTask.Result,
-            oidcProviderTask.Result
+            await authSubjectsTask,
+            await roleTask,
+            await oidcProviderTask
         );
         if (authLastModified.HasValue)
         {
             additional["auth"] = authLastModified.Value;
         }
 
-        var notificationsLastModified = GetMostRecentTimestamp(
-            notificationPreferencesTask.Result,
-            alertRulesTask.Result,
-            alertHistoryTask.Result
-        );
-        if (notificationsLastModified.HasValue)
-        {
-            additional["notifications"] = notificationsLastModified.Value;
-        }
 
         var response = new LastModifiedResponse
         {
             ServerTime = serverTime,
-            Entries = entriesTask.Result,
-            Treatments = treatmentsTask.Result,
-            Profile = profileTask.Result,
-            DeviceStatus = deviceStatusTask.Result,
-            Food = foodTask.Result,
-            Settings = settingsTask.Result,
-            Activity = activityTask.Result,
+            Entries = await entriesTask,
+            Treatments = await treatmentsTask,
+            Profile = await profileTask,
+            DeviceStatus = await deviceStatusTask,
+            Food = await foodTask,
+            Settings = await settingsTask,
+            Activity = await activityTask,
             Additional = additional,
         };
 
@@ -705,6 +667,12 @@ public class StatusService : IStatusService
             ["v2"] = false, // Not implemented yet
             ["v3"] = true, // Partially implemented
         };
+    }
+
+    private async Task<DateTime?> LastModifiedAsync(Func<NocturneDbContext, Task<DateTime?>> query)
+    {
+        await using var ctx = await _dbContextFactory.CreateDbContextAsync();
+        return await query(ctx);
     }
 
     private static DateTime? GetMostRecentTimestamp(params DateTime?[] timestamps)

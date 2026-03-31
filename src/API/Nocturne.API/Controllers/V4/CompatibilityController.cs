@@ -2,8 +2,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Nocturne.API.Configuration;
 using Nocturne.API.Services.Compatibility;
+using Nocturne.Connectors.Nightscout.Configurations;
 using Nocturne.Core.Models;
-using Nocturne.Infrastructure.Data.Repositories;
+using Nocturne.Infrastructure.Data.Abstractions;
 
 namespace Nocturne.API.Controllers.V4;
 
@@ -15,9 +16,10 @@ namespace Nocturne.API.Controllers.V4;
 public class CompatibilityController : ControllerBase
 {
     private readonly IDiscrepancyPersistenceService _persistenceService;
-    private readonly DiscrepancyAnalysisRepository _repository;
+    private readonly IDiscrepancyAnalysisRepository _repository;
 
     private readonly CompatibilityProxyConfiguration _configuration;
+    private readonly NightscoutConnectorConfiguration? _nightscoutConfig;
     private readonly ILogger<CompatibilityController> _logger;
 
     /// <summary>
@@ -25,15 +27,17 @@ public class CompatibilityController : ControllerBase
     /// </summary>
     public CompatibilityController(
         IDiscrepancyPersistenceService persistenceService,
-        DiscrepancyAnalysisRepository repository,
+        IDiscrepancyAnalysisRepository repository,
         IOptions<CompatibilityProxyConfiguration> configuration,
-        ILogger<CompatibilityController> logger
+        ILogger<CompatibilityController> logger,
+        NightscoutConnectorConfiguration? nightscoutConfig = null
     )
     {
         _persistenceService = persistenceService;
         _repository = repository;
 
         _configuration = configuration.Value;
+        _nightscoutConfig = nightscoutConfig;
         _logger = logger;
     }
 
@@ -47,8 +51,8 @@ public class CompatibilityController : ControllerBase
         return Ok(
             new ProxyConfigurationDto
             {
-                NightscoutUrl = _configuration.NightscoutUrl,
-                DefaultStrategy = _configuration.DefaultStrategy.ToString(),
+                NightscoutUrl = _nightscoutConfig?.Url ?? string.Empty,
+                Enabled = _configuration.Enabled,
                 EnableDetailedLogging = _configuration.EnableDetailedLogging,
             }
         );
@@ -77,7 +81,7 @@ public class CompatibilityController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving compatibility metrics");
-            return StatusCode(500, new { error = "Failed to retrieve metrics" });
+            return Problem(detail: "Failed to retrieve metrics", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -104,7 +108,7 @@ public class CompatibilityController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving endpoint metrics");
-            return StatusCode(500, new { error = "Failed to retrieve endpoint metrics" });
+            return Problem(detail: "Failed to retrieve endpoint metrics", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -166,7 +170,7 @@ public class CompatibilityController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving analyses");
-            return StatusCode(500, new { error = "Failed to retrieve analyses" });
+            return Problem(detail: "Failed to retrieve analyses", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -197,7 +201,7 @@ public class CompatibilityController : ControllerBase
 
             if (analysis == null)
             {
-                return NotFound(new { error = "Analysis not found" });
+                return Problem(detail: "Analysis not found", statusCode: 404, title: "Not Found");
             }
 
             var detail = new AnalysisDetailDto
@@ -244,7 +248,7 @@ public class CompatibilityController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving analysis detail for {Id}", id);
-            return StatusCode(500, new { error = "Failed to retrieve analysis detail" });
+            return Problem(detail: "Failed to retrieve analysis detail", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -265,12 +269,12 @@ public class CompatibilityController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.NightscoutUrl))
         {
-            return BadRequest(new { error = "NightscoutUrl is required" });
+            return Problem(detail: "NightscoutUrl is required", statusCode: 400, title: "Bad Request");
         }
 
         if (string.IsNullOrWhiteSpace(request.QueryPath))
         {
-            return BadRequest(new { error = "QueryPath is required" });
+            return Problem(detail: "QueryPath is required", statusCode: 400, title: "Bad Request");
         }
 
         var result = new ManualTestResult
@@ -411,7 +415,7 @@ public class CompatibilityController : ControllerBase
 public class ProxyConfigurationDto
 {
     public string NightscoutUrl { get; set; } = string.Empty;
-    public string DefaultStrategy { get; set; } = string.Empty;
+    public bool Enabled { get; set; }
     public bool EnableDetailedLogging { get; set; }
 }
 

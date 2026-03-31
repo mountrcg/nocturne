@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Nocturne.API.Attributes;
 using Nocturne.Core.Contracts;
@@ -12,23 +13,21 @@ namespace Nocturne.API.Controllers.V1;
 /// </summary>
 [ApiController]
 [Route("api/v1/[controller]")]
+[Authorize]
 public class TreatmentsController : ControllerBase
 {
     private readonly ITreatmentService _treatmentService;
-    private readonly IDataFormatService _dataFormatService;
-    private readonly ITreatmentProcessingService _treatmentProcessingService;
+    private readonly IDocumentProcessingService _documentProcessingService;
     private readonly ILogger<TreatmentsController> _logger;
 
     public TreatmentsController(
         ITreatmentService treatmentService,
-        IDataFormatService dataFormatService,
-        ITreatmentProcessingService treatmentProcessingService,
+        IDocumentProcessingService treatmentProcessingService,
         ILogger<TreatmentsController> logger
     )
     {
         _treatmentService = treatmentService;
-        _dataFormatService = dataFormatService;
-        _treatmentProcessingService = treatmentProcessingService;
+        _documentProcessingService = treatmentProcessingService;
         _logger = logger;
     }
 
@@ -42,6 +41,7 @@ public class TreatmentsController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Array of treatments ordered by most recent first</returns>
     [HttpGet]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v1/treatments")]
     [ProducesResponseType(typeof(Treatment[]), 200)]
     [ProducesResponseType(400)]
@@ -131,6 +131,7 @@ public class TreatmentsController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The treatment with the specified ID</returns>
     [HttpGet("{id}")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v1/treatments/:id")]
     [ProducesResponseType(typeof(Treatment), 200)]
     [ProducesResponseType(404)]
@@ -232,7 +233,7 @@ public class TreatmentsController : ControllerBase
             }
 
             // Process treatments: sanitize HTML, convert timestamps, set defaults, and deduplicate
-            var processedTreatments = _treatmentProcessingService.ProcessTreatments(
+            var processedTreatments = _documentProcessingService.ProcessDocuments(
                 treatmentsToCreate
             );
 

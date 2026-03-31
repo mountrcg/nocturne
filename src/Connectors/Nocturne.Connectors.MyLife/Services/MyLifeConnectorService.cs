@@ -8,23 +8,26 @@ using Nocturne.Connectors.MyLife.Mappers;
 using Nocturne.Connectors.MyLife.Models;
 using Nocturne.Core.Constants;
 using Nocturne.Core.Models;
+using Nocturne.Core.Models.V4;
 
 namespace Nocturne.Connectors.MyLife.Services;
 
+/// <summary>
+/// MyLife connector service that syncs data using granular models.
+/// This connector creates SensorGlucose, Bolus, CarbIntake, BGCheck, Note,
+/// DeviceEvent, and TempBasal records directly instead of legacy Entry/Treatment.
+/// </summary>
 public class MyLifeConnectorService(
     HttpClient httpClient,
     IOptions<MyLifeConnectorConfiguration> config,
     ILogger<MyLifeConnectorService> logger,
     MyLifeAuthTokenProvider tokenProvider,
     MyLifeEventsCache eventsCache,
-    MyLifeEventProcessor eventMapper,
+    MyLifeEventProcessor eventProcessor,
     MyLifeSessionStore sessionStore,
+    MyLifeSyncService syncService,
     IConnectorPublisher? publisher = null
-)
-    : BaseConnectorService<MyLifeConnectorConfiguration>(
-        httpClient,
-        logger,
-        publisher)
+) : BaseConnectorService<MyLifeConnectorConfiguration>(httpClient, logger, publisher)
 {
     private readonly MyLifeConnectorConfiguration _config = config.Value;
 
@@ -32,7 +35,17 @@ public class MyLifeConnectorService(
     protected override string ConnectorSource => DataSources.MyLifeConnector;
 
     public override List<SyncDataType> SupportedDataTypes =>
-        [SyncDataType.Glucose, SyncDataType.Treatments];
+    [
+        SyncDataType.Glucose,
+        SyncDataType.ManualBG,
+        SyncDataType.Boluses,
+        SyncDataType.CarbIntake,
+        SyncDataType.BolusCalculations,
+        SyncDataType.Notes,
+        SyncDataType.DeviceEvents,
+        SyncDataType.StateSpans,
+        SyncDataType.Profiles
+    ];
 
     public override bool IsHealthy =>
         FailedRequestCount < MaxFailedRequestsBeforeUnhealthy && !tokenProvider.IsTokenExpired;
@@ -51,7 +64,20 @@ public class MyLifeConnectorService(
         return true;
     }
 
-    public override async Task<IEnumerable<Entry>> FetchGlucoseDataAsync(DateTime? since = null)
+    /// <summary>
+    /// Legacy method required by IConnectorService interface.
+    /// Returns empty - use FetchSensorGlucoseAsync for glucose data.
+    /// </summary>
+    public override Task<IEnumerable<Entry>> FetchGlucoseDataAsync(DateTime? since = null)
+    {
+        // Connectors don't create Entry objects - return empty
+        return Task.FromResult(Enumerable.Empty<Entry>());
+    }
+
+    /// <summary>
+    /// Fetches SensorGlucose records from MyLife events.
+    /// </summary>
+    public async Task<IEnumerable<SensorGlucose>> FetchSensorGlucoseAsync(DateTime? since = null)
     {
         var actualSince = await CalculateSinceTimestampAsync(_config, since);
         var events = await eventsCache.GetEventsAsync(
@@ -61,13 +87,13 @@ public class MyLifeConnectorService(
         );
 
         var filtered = FilterEventsBySince(events, actualSince);
-        return eventMapper.MapEntries(filtered, _config.EnableGlucoseSync);
+        return eventProcessor.MapSensorGlucose(filtered);
     }
 
-    protected override async Task<IEnumerable<Treatment>> FetchTreatmentsAsync(
-        DateTime? from,
-        DateTime? to
-    )
+    /// <summary>
+    /// Fetches all records (Bolus, CarbIntake, BGCheck, Note, DeviceEvent, etc.) from MyLife events.
+    /// </summary>
+    public async Task<MyLifeResult> FetchRecordsAsync(DateTime? from, DateTime? to)
     {
         var actualSince = await CalculateTreatmentSinceTimestampAsync(_config, from);
         var actualUntil = to ?? DateTime.UtcNow;
@@ -78,22 +104,18 @@ public class MyLifeConnectorService(
         );
 
         var filtered = FilterEventsBySince(events, actualSince);
-        return eventMapper.MapTreatments(
+        return eventProcessor.MapRecords(
             filtered,
-            _config.EnableManualBgSync,
             _config.EnableMealCarbConsolidation,
             _config.EnableTempBasalConsolidation,
-            _config.TempBasalConsolidationWindowMinutes);
+            _config.TempBasalConsolidationWindowMinutes
+        );
     }
 
     /// <summary>
-    ///     Fetches BasalDelivery StateSpans from MyLife events.
-    ///     These provide pump-confirmed basal delivery tracking with implicit duration model.
+    /// Fetches TempBasal records from MyLife basal delivery events.
     /// </summary>
-    protected async Task<IEnumerable<StateSpan>> FetchStateSpansAsync(
-        DateTime? from,
-        DateTime? to
-    )
+    public async Task<IEnumerable<TempBasal>> FetchTempBasalsAsync(DateTime? from, DateTime? to)
     {
         var actualSince = await CalculateTreatmentSinceTimestampAsync(_config, from);
         var actualUntil = to ?? DateTime.UtcNow;
@@ -104,58 +126,314 @@ public class MyLifeConnectorService(
         );
 
         var filtered = FilterEventsBySince(events, actualSince);
-        return eventMapper.MapStateSpans(
+        return MyLifeStateSpanMapper.MapTempBasals(
             filtered,
             _config.EnableTempBasalConsolidation,
-            _config.TempBasalConsolidationWindowMinutes);
+            _config.TempBasalConsolidationWindowMinutes
+        );
     }
 
     /// <summary>
-    ///     Override sync to also publish BasalDelivery StateSpans alongside Treatments.
+    /// Fetches pump settings from MyLife and maps them to Profile records.
+    /// </summary>
+    public async Task<IEnumerable<Profile>> FetchPumpSettingsProfileAsync(
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(sessionStore.ServiceUrl)
+            || string.IsNullOrWhiteSpace(sessionStore.AuthToken)
+            || string.IsNullOrWhiteSpace(sessionStore.PatientId))
+        {
+            return [];
+        }
+
+        var readouts = await syncService.FetchPumpSettingsAsync(
+            sessionStore.ServiceUrl,
+            sessionStore.AuthToken,
+            sessionStore.PatientId,
+            cancellationToken
+        );
+
+        return MyLifePumpSettingsMapper.MapToProfiles(readouts);
+    }
+
+    /// <summary>
+    /// Performs sync, publishing all granular model types directly.
     /// </summary>
     protected override async Task<SyncResult> PerformSyncInternalAsync(
         SyncRequest request,
         MyLifeConnectorConfiguration config,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ISyncProgressReporter? progressReporter = null
+    )
     {
-        // Call the base implementation first
-        var result = await base.PerformSyncInternalAsync(request, config, cancellationToken);
+        var result = new SyncResult { StartTime = DateTimeOffset.UtcNow, Success = true };
 
-        // If treatments were synced, also sync BasalDelivery StateSpans
-        if (request.DataTypes.Contains(SyncDataType.Treatments))
-            try
+        if (!request.DataTypes.Any())
+            request.DataTypes = SupportedDataTypes;
+
+        var enabledTypes = config.GetEnabledDataTypes(SupportedDataTypes);
+        var activeTypes = request.DataTypes.Where(t => enabledTypes.Contains(t)).ToHashSet();
+
+        try
+        {
+            // Sync glucose data as SensorGlucose
+            if (activeTypes.Contains(SyncDataType.Glucose))
             {
-                var stateSpans = await FetchStateSpansAsync(request.From, request.To);
-                var stateSpanList = stateSpans.ToList();
+                var sensorGlucose = await FetchSensorGlucoseAsync(request.From);
+                var sgList = sensorGlucose.ToList();
 
-                if (stateSpanList.Count > 0)
+                if (sgList.Count > 0)
                 {
-                    var stateSpanSuccess = await PublishStateSpanDataAsync(
-                        stateSpanList,
+                    var success = await PublishSensorGlucoseDataAsync(
+                        sgList,
                         config,
-                        cancellationToken);
+                        cancellationToken
+                    );
+                    result.ItemsSynced[SyncDataType.Glucose] = sgList.Count;
+                    result.LastEntryTimes[SyncDataType.Glucose] = DateTimeOffset
+                        .FromUnixTimeMilliseconds(sgList.Max(s => s.Mills))
+                        .UtcDateTime;
 
-                    if (stateSpanSuccess)
-                        _logger.LogInformation(
-                            "Successfully synced {Count} BasalDelivery StateSpans",
-                            stateSpanList.Count);
+                    if (!success)
+                    {
+                        result.Success = false;
+                        result.Errors.Add("SensorGlucose publish failed");
+                    }
                     else
-                        _logger.LogWarning(
-                            "Failed to sync some BasalDelivery StateSpans");
+                    {
+                        _logger.LogInformation(
+                            "Synced {Count} SensorGlucose records",
+                            sgList.Count
+                        );
+                    }
                 }
             }
-            catch (Exception ex)
+
+            // Determine if any treatment sub-type is active
+            var treatmentSubTypes = new[]
             {
-                _logger.LogError(ex, "Error syncing BasalDelivery StateSpans");
-                // Don't fail the overall sync if StateSpan sync fails
+                SyncDataType.ManualBG,
+                SyncDataType.Boluses,
+                SyncDataType.CarbIntake,
+                SyncDataType.BolusCalculations,
+                SyncDataType.Notes,
+                SyncDataType.DeviceEvents
+            };
+            var needRecords = treatmentSubTypes.Any(t => activeTypes.Contains(t));
+
+            if (needRecords)
+            {
+                var records = await FetchRecordsAsync(request.From, request.To);
+
+                // Publish Boluses
+                if (activeTypes.Contains(SyncDataType.Boluses) && records.Boluses.Count > 0)
+                {
+                    var success = await PublishBolusDataAsync(
+                        records.Boluses,
+                        config,
+                        cancellationToken
+                    );
+                    if (success)
+                    {
+                        _logger.LogInformation(
+                            "Synced {Count} Bolus records",
+                            records.Boluses.Count
+                        );
+                        result.ItemsSynced[SyncDataType.Boluses] = records.Boluses.Count;
+                    }
+                    else
+                    {
+                        result.Success = false;
+                        result.Errors.Add("Bolus publish failed");
+                    }
+                }
+
+                // Publish CarbIntakes
+                if (activeTypes.Contains(SyncDataType.CarbIntake) && records.CarbIntakes.Count > 0)
+                {
+                    var success = await PublishCarbIntakeDataAsync(
+                        records.CarbIntakes,
+                        config,
+                        cancellationToken
+                    );
+                    if (success)
+                    {
+                        _logger.LogInformation(
+                            "Synced {Count} CarbIntake records",
+                            records.CarbIntakes.Count
+                        );
+                        result.ItemsSynced[SyncDataType.CarbIntake] = records.CarbIntakes.Count;
+                    }
+                    else
+                    {
+                        result.Success = false;
+                        result.Errors.Add("CarbIntake publish failed");
+                    }
+                }
+
+                // Publish BGChecks
+                if (activeTypes.Contains(SyncDataType.ManualBG) && records.BGChecks.Count > 0)
+                {
+                    var success = await PublishBGCheckDataAsync(
+                        records.BGChecks,
+                        config,
+                        cancellationToken
+                    );
+                    if (success)
+                    {
+                        _logger.LogInformation(
+                            "Synced {Count} BGCheck records",
+                            records.BGChecks.Count
+                        );
+                        result.ItemsSynced[SyncDataType.ManualBG] = records.BGChecks.Count;
+                    }
+                    else
+                    {
+                        result.Success = false;
+                        result.Errors.Add("BGCheck publish failed");
+                    }
+                }
+
+                // Publish BolusCalculations
+                if (activeTypes.Contains(SyncDataType.BolusCalculations) && records.BolusCalculations.Count > 0)
+                {
+                    var success = await PublishBolusCalculationDataAsync(
+                        records.BolusCalculations,
+                        config,
+                        cancellationToken
+                    );
+                    if (success)
+                    {
+                        _logger.LogInformation(
+                            "Synced {Count} BolusCalculation records",
+                            records.BolusCalculations.Count
+                        );
+                        result.ItemsSynced[SyncDataType.BolusCalculations] = records.BolusCalculations.Count;
+                    }
+                    else
+                    {
+                        result.Success = false;
+                        result.Errors.Add("BolusCalculation publish failed");
+                    }
+                }
+
+                // Publish Notes
+                if (activeTypes.Contains(SyncDataType.Notes) && records.Notes.Count > 0)
+                {
+                    var success = await PublishNoteDataAsync(
+                        records.Notes,
+                        config,
+                        cancellationToken
+                    );
+                    if (success)
+                    {
+                        _logger.LogInformation("Synced {Count} Note records", records.Notes.Count);
+                        result.ItemsSynced[SyncDataType.Notes] = records.Notes.Count;
+                    }
+                    else
+                    {
+                        result.Success = false;
+                        result.Errors.Add("Note publish failed");
+                    }
+                }
+
+                // Publish DeviceEvents
+                if (activeTypes.Contains(SyncDataType.DeviceEvents) && records.DeviceEvents.Count > 0)
+                {
+                    var success = await PublishDeviceEventDataAsync(
+                        records.DeviceEvents,
+                        config,
+                        cancellationToken
+                    );
+                    if (success)
+                    {
+                        _logger.LogInformation(
+                            "Synced {Count} DeviceEvent records",
+                            records.DeviceEvents.Count
+                        );
+                        result.ItemsSynced[SyncDataType.DeviceEvents] = records.DeviceEvents.Count;
+                    }
+                    else
+                    {
+                        result.Success = false;
+                        result.Errors.Add("DeviceEvent publish failed");
+                    }
+                }
             }
 
+            // Publish TempBasal records for basal delivery
+            if (activeTypes.Contains(SyncDataType.StateSpans))
+            {
+                var tempBasals = await FetchTempBasalsAsync(request.From, request.To);
+                var tempBasalList = tempBasals.ToList();
+
+                if (tempBasalList.Count > 0)
+                {
+                    var success = await PublishTempBasalDataAsync(
+                        tempBasalList,
+                        config,
+                        cancellationToken
+                    );
+                    if (success)
+                    {
+                        _logger.LogInformation(
+                            "Synced {Count} TempBasal records",
+                            tempBasalList.Count
+                        );
+                        result.ItemsSynced[SyncDataType.StateSpans] = tempBasalList.Count;
+                    }
+                    else
+                    {
+                        result.Success = false;
+                        result.Errors.Add("TempBasal publish failed");
+                    }
+                }
+            }
+
+            // Publish Profile records from pump settings
+            if (activeTypes.Contains(SyncDataType.Profiles))
+            {
+                var profiles = await FetchPumpSettingsProfileAsync(cancellationToken);
+                var profileList = profiles.ToList();
+
+                if (profileList.Count > 0)
+                {
+                    var success = await PublishProfileDataAsync(
+                        profileList,
+                        config,
+                        cancellationToken
+                    );
+                    if (success)
+                    {
+                        _logger.LogInformation(
+                            "Synced {Count} Profile records from pump settings",
+                            profileList.Count
+                        );
+                        result.ItemsSynced[SyncDataType.Profiles] = profileList.Count;
+                    }
+                    else
+                    {
+                        result.Success = false;
+                        result.Errors.Add("Profile publish failed");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during sync");
+            result.Success = false;
+            result.Errors.Add($"Sync error: {ex.Message}");
+        }
+
+        result.EndTime = DateTimeOffset.UtcNow;
         return result;
     }
 
     private static IEnumerable<MyLifeEvent> FilterEventsBySince(
         IEnumerable<MyLifeEvent> events,
-        DateTime since)
+        DateTime since
+    )
     {
         var sinceTicks = new DateTimeOffset(since).ToUnixTimeMilliseconds() * 10_000;
         return events.Where(e => e.EventDateTime >= sinceTicks);

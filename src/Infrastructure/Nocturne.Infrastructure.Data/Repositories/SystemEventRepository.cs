@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Nocturne.Core.Contracts.Repositories;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Data.Entities;
 using Nocturne.Infrastructure.Data.Mappers;
@@ -8,13 +9,14 @@ namespace Nocturne.Infrastructure.Data.Repositories;
 /// <summary>
 /// PostgreSQL repository for SystemEvent operations
 /// </summary>
-public class SystemEventRepository
+public class SystemEventRepository : ISystemEventRepository
 {
     private readonly NocturneDbContext _context;
 
     /// <summary>
     /// Initializes a new instance of the SystemEventRepository class
     /// </summary>
+    /// <param name="context">The database context.</param>
     public SystemEventRepository(NocturneDbContext context)
     {
         _context = context;
@@ -23,7 +25,16 @@ public class SystemEventRepository
     /// <summary>
     /// Get system events with optional filtering
     /// </summary>
-    public async Task<IEnumerable<SystemEvent>> GetSystemEventsAsync(
+    /// <param name="eventType">Optional event type filter.</param>
+    /// <param name="category">Optional category filter.</param>
+    /// <param name="from">Optional start timestamp (mills) filter.</param>
+    /// <param name="to">Optional end timestamp (mills) filter.</param>
+    /// <param name="source">Optional source identifier filter.</param>
+    /// <param name="count">The maximum number of events to return.</param>
+    /// <param name="skip">The number of events to skip.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of matching system events.</returns>
+    public virtual async Task<IEnumerable<SystemEvent>> GetSystemEventsAsync(
         SystemEventType? eventType = null,
         SystemEventCategory? category = null,
         long? from = null,
@@ -62,6 +73,9 @@ public class SystemEventRepository
     /// <summary>
     /// Get a specific system event by ID
     /// </summary>
+    /// <param name="id">The unique identifier (GUID or legacy string ID).</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The system event, or null if not found.</returns>
     public async Task<SystemEvent?> GetSystemEventByIdAsync(
         string id,
         CancellationToken cancellationToken = default)
@@ -83,6 +97,9 @@ public class SystemEventRepository
     /// <summary>
     /// Create or update a system event (upsert by originalId)
     /// </summary>
+    /// <param name="systemEvent">The system event data to upsert.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The upserted system event.</returns>
     public async Task<SystemEvent> UpsertSystemEventAsync(
         SystemEvent systemEvent,
         CancellationToken cancellationToken = default)
@@ -123,6 +140,9 @@ public class SystemEventRepository
     /// <summary>
     /// Bulk upsert system events (for connector imports)
     /// </summary>
+    /// <param name="events">The collection of system events to upsert.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of events processed.</returns>
     public async Task<int> BulkUpsertAsync(
         IEnumerable<SystemEvent> events,
         CancellationToken cancellationToken = default)
@@ -139,6 +159,9 @@ public class SystemEventRepository
     /// <summary>
     /// Delete a system event
     /// </summary>
+    /// <param name="id">The unique identifier of the event to delete.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True if the event was deleted, otherwise false.</returns>
     public async Task<bool> DeleteSystemEventAsync(
         string id,
         CancellationToken cancellationToken = default)
@@ -165,6 +188,9 @@ public class SystemEventRepository
     /// <summary>
     /// Delete all system events with the specified data source
     /// </summary>
+    /// <param name="source">The source identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of deleted records.</returns>
     public async Task<long> DeleteBySourceAsync(
         string source,
         CancellationToken cancellationToken = default)

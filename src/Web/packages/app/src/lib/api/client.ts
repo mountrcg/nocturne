@@ -1,5 +1,7 @@
-import { ApiClient } from "./api-client";
+import { ApiClient } from "./api-client.generated";
 import { browser } from "$app/environment";
+import { createAuthenticatedFetch } from "./auth-interceptor";
+import { getActingAsHeaders } from "$lib/stores/acting-as";
 
 /**
  * Client-side API client instance This should be used in the browser when you
@@ -9,7 +11,7 @@ let clientApiClient: ApiClient | null = null;
 
 /**
  * Get the API client for client-side usage This creates a new instance with the
- * browser's native fetch
+ * browser's native fetch and auth interceptor
  */
 export function getApiClient(): ApiClient {
   if (!browser) {
@@ -23,15 +25,28 @@ export function getApiClient(): ApiClient {
     // which proxies /api/* requests to the backend via hooks.server.ts
     // This avoids cross-origin issues since cookies are sent with same-origin requests
     const apiBaseUrl = "";
-    // Wrap fetch to include credentials for cookie support
-    const httpClient = {
-      fetch: (url: RequestInfo, init?: RequestInit): Promise<Response> => {
-        return window.fetch(url, {
-          ...init,
-          credentials: 'include',
-        });
+
+    // Create the base fetch function with credentials and acting-as headers
+    const baseFetch = (url: RequestInfo, init?: RequestInit): Promise<Response> => {
+      const actingAsHeaders = getActingAsHeaders();
+      const headers = new Headers(init?.headers);
+      for (const [key, value] of Object.entries(actingAsHeaders)) {
+        headers.set(key, value);
       }
+      return window.fetch(url, {
+        ...init,
+        headers,
+        credentials: 'include',
+      });
     };
+
+    // Wrap fetch with auth interceptor to handle 401 responses
+    const authenticatedFetch = createAuthenticatedFetch(baseFetch);
+
+    const httpClient = {
+      fetch: authenticatedFetch,
+    };
+
     clientApiClient = new ApiClient(apiBaseUrl, httpClient);
   }
 

@@ -44,6 +44,18 @@ declare global {
 			 * Whether the current request is authenticated
 			 */
 			isAuthenticated: boolean;
+			/**
+			 * Whether site security has been checked for this request
+			 */
+			siteSecurityChecked?: boolean;
+			/**
+			 * Whether site requires authentication (lockdown mode)
+			 */
+			requireAuthentication?: boolean;
+			/**
+			 * Effective permissions (granted scopes) for the current user on the current tenant
+			 */
+			effectivePermissions?: string[];
 		}
 
 		// Base page data interface for the main app

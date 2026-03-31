@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace Nocturne.Core.Models;
 
 /// <summary>
-/// Represents a food attribution entry linked to a treatment.
+/// Represents a food attribution entry linked to a carb intake record.
 /// </summary>
 [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
 public class TreatmentFood
@@ -11,8 +11,8 @@ public class TreatmentFood
     [JsonPropertyName("id")]
     public Guid Id { get; set; }
 
-    [JsonPropertyName("treatmentId")]
-    public Guid TreatmentId { get; set; }
+    [JsonPropertyName("carbIntakeId")]
+    public Guid CarbIntakeId { get; set; }
 
     [JsonPropertyName("foodId")]
     public Guid? FoodId { get; set; }
@@ -34,6 +34,12 @@ public class TreatmentFood
 
     [JsonPropertyName("carbsPerPortion")]
     public decimal? CarbsPerPortion { get; set; }
+
+    [JsonPropertyName("fatPerPortion")]
+    public decimal? FatPerPortion { get; set; }
+
+    [JsonPropertyName("proteinPerPortion")]
+    public decimal? ProteinPerPortion { get; set; }
 }
 
 /// <summary>
@@ -52,13 +58,25 @@ public class UserFoodFavorite
 }
 
 /// <summary>
-/// Aggregated food breakdown for a treatment.
+/// Response model for how many meal attributions reference a specific food.
+/// </summary>
+public class FoodAttributionCount
+{
+    [JsonPropertyName("foodId")]
+    public string FoodId { get; set; } = string.Empty;
+
+    [JsonPropertyName("count")]
+    public int Count { get; set; }
+}
+
+/// <summary>
+/// Aggregated food breakdown for a carb intake record.
 /// </summary>
 [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
 public class TreatmentFoodBreakdown
 {
-    [JsonPropertyName("treatmentId")]
-    public Guid TreatmentId { get; set; }
+    [JsonPropertyName("carbIntakeId")]
+    public Guid CarbIntakeId { get; set; }
 
     [JsonPropertyName("foods")]
     public List<TreatmentFood> Foods { get; set; } = [];
@@ -73,24 +91,3 @@ public class TreatmentFoodBreakdown
     public decimal UnspecifiedCarbs { get; set; }
 }
 
-/// <summary>
-/// Meal treatment response for attribution workflows.
-/// </summary>
-[JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
-public class MealTreatment
-{
-    [JsonPropertyName("treatment")]
-    public Treatment Treatment { get; set; } = new();
-
-    [JsonPropertyName("foods")]
-    public List<TreatmentFood> Foods { get; set; } = [];
-
-    [JsonPropertyName("isAttributed")]
-    public bool IsAttributed { get; set; }
-
-    [JsonPropertyName("attributedCarbs")]
-    public decimal AttributedCarbs { get; set; }
-
-    [JsonPropertyName("unspecifiedCarbs")]
-    public decimal UnspecifiedCarbs { get; set; }
-}

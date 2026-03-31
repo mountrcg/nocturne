@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Repositories;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Data.Entities;
 using Nocturne.Infrastructure.Data.Mappers;
@@ -10,11 +11,22 @@ namespace Nocturne.Infrastructure.Data.Repositories;
 /// <summary>
 /// PostgreSQL repository for StateSpan operations
 /// </summary>
-public class StateSpanRepository
+public class StateSpanRepository : IStateSpanRepository
 {
     private readonly NocturneDbContext _context;
     private readonly IDeduplicationService _deduplicationService;
     private readonly ILogger<StateSpanRepository> _logger;
+
+    /// <summary>
+    /// Categories where only one span can be active at a time.
+    /// When a new span is inserted in one of these categories, any existing open spans are closed.
+    /// </summary>
+    private static readonly HashSet<string> ExclusiveCategories = new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(StateSpanCategory.Override),
+        nameof(StateSpanCategory.TemporaryTarget),
+        nameof(StateSpanCategory.Profile),
+    };
 
     /// <summary>
     /// Initializes a new instance of the StateSpanRepository class
@@ -36,11 +48,21 @@ public class StateSpanRepository
     /// <summary>
     /// Get state spans with optional filtering
     /// </summary>
+    /// <param name="category">Optional category filter.</param>
+    /// <param name="state">Optional state name filter.</param>
+    /// <param name="from">Optional start date filter (includes spans ending after this date).</param>
+    /// <param name="to">Optional end date filter (includes spans starting before this date).</param>
+    /// <param name="source">Optional source filter.</param>
+    /// <param name="active">Optional filter for active (open-ended) vs completed spans.</param>
+    /// <param name="count">The maximum number of spans to return.</param>
+    /// <param name="skip">The number of spans to skip.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of state spans.</returns>
     public async Task<IEnumerable<StateSpan>> GetStateSpansAsync(
         StateSpanCategory? category = null,
         string? state = null,
-        long? from = null,
-        long? to = null,
+        DateTime? from = null,
+        DateTime? to = null,
         string? source = null,
         bool? active = null,
         int count = 100,
@@ -60,21 +82,27 @@ public class StateSpanRepository
             query = query.Where(s => s.Source == source);
 
         if (from.HasValue)
-            query = query.Where(s => s.EndMills == null || s.EndMills >= from.Value);
+            query = query.Where(s => s.EndTimestamp == null || s.EndTimestamp >= from.Value);
 
         if (to.HasValue)
-            query = query.Where(s => s.StartMills <= to.Value);
+            query = query.Where(s => s.StartTimestamp <= to.Value);
 
         if (active.HasValue)
         {
             if (active.Value)
-                query = query.Where(s => s.EndMills == null);
+                query = query.Where(s => s.EndTimestamp == null);
             else
-                query = query.Where(s => s.EndMills != null);
+                query = query.Where(s => s.EndTimestamp != null);
         }
 
+        // Exclude non-primary duplicates from cross-connector deduplication
+        var nonPrimaryIds = _context.LinkedRecords
+            .Where(lr => lr.RecordType == "statespan" && !lr.IsPrimary)
+            .Select(lr => lr.RecordId);
+        query = query.Where(s => !nonPrimaryIds.Contains(s.Id));
+
         var entities = await query
-            .OrderByDescending(s => s.StartMills)
+            .OrderByDescending(s => s.StartTimestamp)
             .Skip(skip)
             .Take(count)
             .ToListAsync(cancellationToken);
@@ -85,6 +113,9 @@ public class StateSpanRepository
     /// <summary>
     /// Get a specific state span by ID
     /// </summary>
+    /// <param name="id">The unique identifier (GUID or legacy string ID).</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The state span, or null if not found.</returns>
     public async Task<StateSpan?> GetStateSpanByIdAsync(
         string id,
         CancellationToken cancellationToken = default
@@ -109,6 +140,9 @@ public class StateSpanRepository
     /// <summary>
     /// Create or update a state span (upsert by originalId) and link to canonical groups
     /// </summary>
+    /// <param name="stateSpan">The state span data to upsert.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The upserted state span.</returns>
     public async Task<StateSpan> UpsertStateSpanAsync(
         StateSpan stateSpan,
         CancellationToken cancellationToken = default
@@ -139,6 +173,32 @@ public class StateSpanRepository
 
         await _context.SaveChangesAsync(cancellationToken);
 
+        // For exclusive categories, close any existing open spans when a new one is inserted
+        if (isNew && ExclusiveCategories.Contains(entity.Category))
+        {
+            var openSpans = await _context.StateSpans
+                .Where(s =>
+                    s.Category == entity.Category
+                    && s.EndTimestamp == null
+                    && s.Id != entity.Id)
+                .ToListAsync(cancellationToken);
+
+            if (openSpans.Count > 0)
+            {
+                foreach (var openSpan in openSpans)
+                {
+                    openSpan.EndTimestamp = entity.StartTimestamp;
+                    openSpan.SupersededById = entity.Id;
+                    openSpan.UpdatedAt = DateTime.UtcNow;
+                }
+
+                await _context.SaveChangesAsync(cancellationToken);
+                _logger.LogDebug(
+                    "Superseded {Count} open {Category} span(s) with new span {NewSpanId}",
+                    openSpans.Count, entity.Category, entity.Id);
+            }
+        }
+
         // Link new state spans to canonical groups for deduplication
         if (isNew)
         {
@@ -154,7 +214,7 @@ public class StateSpanRepository
 
                 var canonicalId = await _deduplicationService.GetOrCreateCanonicalIdAsync(
                     RecordType.StateSpan,
-                    entity.StartMills,
+                    new DateTimeOffset(entity.StartTimestamp, TimeSpan.Zero).ToUnixTimeMilliseconds(),
                     criteria,
                     cancellationToken
                 );
@@ -163,7 +223,7 @@ public class StateSpanRepository
                     canonicalId,
                     RecordType.StateSpan,
                     entity.Id,
-                    entity.StartMills,
+                    new DateTimeOffset(entity.StartTimestamp, TimeSpan.Zero).ToUnixTimeMilliseconds(),
                     entity.Source ?? "unknown",
                     cancellationToken
                 );
@@ -181,6 +241,9 @@ public class StateSpanRepository
     /// <summary>
     /// Bulk upsert state spans (for connector imports)
     /// </summary>
+    /// <param name="stateSpans">The collection of state spans to upsert.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of spans processed.</returns>
     public async Task<int> BulkUpsertAsync(
         IEnumerable<StateSpan> stateSpans,
         CancellationToken cancellationToken = default
@@ -198,6 +261,10 @@ public class StateSpanRepository
     /// <summary>
     /// Update an existing state span
     /// </summary>
+    /// <param name="id">The unique identifier of the span to update.</param>
+    /// <param name="stateSpan">The updated state span data.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The updated state span, or null if not found.</returns>
     public async Task<StateSpan?> UpdateStateSpanAsync(
         string id,
         StateSpan stateSpan,
@@ -228,6 +295,9 @@ public class StateSpanRepository
     /// <summary>
     /// Delete a state span
     /// </summary>
+    /// <param name="id">The unique identifier of the span to delete.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True if the span was deleted, otherwise false.</returns>
     public async Task<bool> DeleteStateSpanAsync(
         string id,
         CancellationToken cancellationToken = default
@@ -257,6 +327,9 @@ public class StateSpanRepository
     /// <summary>
     /// Delete all state spans with the specified data source
     /// </summary>
+    /// <param name="source">The source identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of deleted records.</returns>
     public async Task<long> DeleteBySourceAsync(
         string source,
         CancellationToken cancellationToken = default
@@ -271,10 +344,15 @@ public class StateSpanRepository
     /// <summary>
     /// Get state spans by category
     /// </summary>
+    /// <param name="category">The category to filter by.</param>
+    /// <param name="from">Optional start date filter.</param>
+    /// <param name="to">Optional end date filter.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of state spans matching the category.</returns>
     public async Task<IEnumerable<StateSpan>> GetByCategory(
         StateSpanCategory category,
-        long? from = null,
-        long? to = null,
+        DateTime? from = null,
+        DateTime? to = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -289,10 +367,15 @@ public class StateSpanRepository
     /// <summary>
     /// Get state spans for multiple categories in a single query (batch fetch)
     /// </summary>
-    public async Task<Dictionary<StateSpanCategory, List<StateSpan>>> GetByCategories(
+    /// <param name="categories">The collection of categories to filter by.</param>
+    /// <param name="from">Optional start date filter.</param>
+    /// <param name="to">Optional end date filter.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A dictionary of results grouped by category.</returns>
+    public virtual async Task<Dictionary<StateSpanCategory, List<StateSpan>>> GetByCategories(
         IEnumerable<StateSpanCategory> categories,
-        long? from = null,
-        long? to = null,
+        DateTime? from = null,
+        DateTime? to = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -301,13 +384,13 @@ public class StateSpanRepository
         var query = _context.StateSpans.Where(s => categoryStrings.Contains(s.Category));
 
         if (from.HasValue)
-            query = query.Where(s => s.EndMills == null || s.EndMills >= from.Value);
+            query = query.Where(s => s.EndTimestamp == null || s.EndTimestamp >= from.Value);
 
         if (to.HasValue)
-            query = query.Where(s => s.StartMills <= to.Value);
+            query = query.Where(s => s.StartTimestamp <= to.Value);
 
         var entities = await query
-            .OrderByDescending(s => s.StartMills)
+            .OrderByDescending(s => s.StartTimestamp)
             .ToListAsync(cancellationToken);
 
         // Group results by category
@@ -332,6 +415,11 @@ public class StateSpanRepository
     /// <summary>
     /// Get state spans that represent Activity records (Exercise, Sleep, Illness, Travel categories)
     /// </summary>
+    /// <param name="type">Optional specific activity type (state) filter.</param>
+    /// <param name="count">The maximum number of spans to return.</param>
+    /// <param name="skip">The number of spans to skip.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of state spans representing activities.</returns>
     public async Task<IEnumerable<StateSpan>> GetActivityStateSpansAsync(
         string? type = null,
         int count = 10,
@@ -350,7 +438,7 @@ public class StateSpanRepository
             query = query.Where(s => s.State == type);
 
         var entities = await query
-            .OrderByDescending(s => s.StartMills)
+            .OrderByDescending(s => s.StartTimestamp)
             .Skip(skip)
             .Take(count)
             .ToListAsync(cancellationToken);
@@ -361,6 +449,9 @@ public class StateSpanRepository
     /// <summary>
     /// Get a state span by ID that represents an Activity record
     /// </summary>
+    /// <param name="id">The unique identifier (GUID or legacy string ID).</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The activity state span, or null if not found.</returns>
     public async Task<StateSpan?> GetActivityStateSpanByIdAsync(
         string id,
         CancellationToken cancellationToken = default
@@ -389,6 +480,9 @@ public class StateSpanRepository
     /// <summary>
     /// Create or update a state span from an Activity (upsert by originalId)
     /// </summary>
+    /// <param name="stateSpan">The state span data to upsert.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The upserted activity state span.</returns>
     public async Task<StateSpan> UpsertActivityAsStateSpanAsync(
         StateSpan stateSpan,
         CancellationToken cancellationToken = default
@@ -401,6 +495,9 @@ public class StateSpanRepository
     /// <summary>
     /// Create multiple state spans from Activities
     /// </summary>
+    /// <param name="stateSpans">The collection of activity state spans to create.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of created activity state spans.</returns>
     public async Task<IEnumerable<StateSpan>> CreateActivitiesAsStateSpansAsync(
         IEnumerable<StateSpan> stateSpans,
         CancellationToken cancellationToken = default
@@ -418,6 +515,10 @@ public class StateSpanRepository
     /// <summary>
     /// Update an existing Activity state span
     /// </summary>
+    /// <param name="id">The unique identifier of the activity to update.</param>
+    /// <param name="stateSpan">The updated activity state span data.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The updated activity state span, or null if not found.</returns>
     public async Task<StateSpan?> UpdateActivityStateSpanAsync(
         string id,
         StateSpan stateSpan,
@@ -452,6 +553,9 @@ public class StateSpanRepository
     /// <summary>
     /// Delete an Activity state span by ID
     /// </summary>
+    /// <param name="id">The unique identifier of the activity to delete.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True if the activity was deleted, otherwise false.</returns>
     public async Task<bool> DeleteActivityStateSpanAsync(
         string id,
         CancellationToken cancellationToken = default

@@ -1,9 +1,10 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Nocturne.API.Attributes;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
 
 namespace Nocturne.API.Controllers.V3;
 
@@ -13,21 +14,27 @@ namespace Nocturne.API.Controllers.V3;
 /// </summary>
 [ApiController]
 [Route("api/v3/[controller]")]
+[Authorize]
 public class ProfileController : BaseV3Controller<Profile>
 {
+    private readonly IProfileRepository _profiles;
+
     public ProfileController(
-        IPostgreSqlService postgreSqlService,
-        IDataFormatService dataFormatService,
+        IProfileRepository profiles,
         IDocumentProcessingService documentProcessingService,
         ILogger<ProfileController> logger
     )
-        : base(postgreSqlService, dataFormatService, documentProcessingService, logger) { }
+        : base(documentProcessingService, logger)
+    {
+        _profiles = profiles;
+    }
 
     /// <summary>
     /// Get profiles with V3 API features including pagination, field selection, and advanced filtering
     /// </summary>
     /// <returns>V3 profiles collection response</returns>
     [HttpGet]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/profile")]
     [ProducesResponseType(typeof(V3CollectionResponse<object>), 200)]
     [ProducesResponseType(typeof(V3ErrorResponse), 400)]
@@ -49,7 +56,7 @@ public class ProfileController : BaseV3Controller<Profile>
             var reverseResults = ExtractSortDirection(parameters.Sort);
 
             // Get profiles using existing backend with V3 parameters
-            var profiles = await _postgreSqlService.GetProfilesWithAdvancedFilterAsync(
+            var profiles = await _profiles.GetProfilesWithAdvancedFilterAsync(
                 count: parameters.Limit,
                 skip: parameters.Offset,
                 findQuery: findQuery,
@@ -103,6 +110,7 @@ public class ProfileController : BaseV3Controller<Profile>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Single profile in V3 format</returns>
     [HttpGet("{id}")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/profile/{id}")]
     [ProducesResponseType(typeof(Profile), 200)]
     [ProducesResponseType(typeof(V3ErrorResponse), 404)]
@@ -120,7 +128,7 @@ public class ProfileController : BaseV3Controller<Profile>
 
         try
         {
-            var profile = await _postgreSqlService.GetProfileByIdAsync(id, cancellationToken);
+            var profile = await _profiles.GetProfileByIdAsync(id, cancellationToken);
 
             if (profile == null)
             {
@@ -185,7 +193,7 @@ public class ProfileController : BaseV3Controller<Profile>
             }
 
             // Create profiles with deduplication support
-            var createdProfiles = await _postgreSqlService.CreateProfilesAsync(
+            var createdProfiles = await _profiles.CreateProfilesAsync(
                 profiles,
                 cancellationToken
             );
@@ -244,7 +252,7 @@ public class ProfileController : BaseV3Controller<Profile>
 
             ProcessProfileForCreation(profile);
 
-            var updatedProfile = await _postgreSqlService.UpdateProfileAsync(
+            var updatedProfile = await _profiles.UpdateProfileAsync(
                 id,
                 profile,
                 cancellationToken
@@ -299,7 +307,7 @@ public class ProfileController : BaseV3Controller<Profile>
 
         try
         {
-            var deleted = await _postgreSqlService.DeleteProfileAsync(id, cancellationToken);
+            var deleted = await _profiles.DeleteProfileAsync(id, cancellationToken);
 
             if (!deleted)
             {
@@ -441,7 +449,7 @@ public class ProfileController : BaseV3Controller<Profile>
     {
         try
         {
-            return await _postgreSqlService.CountProfilesAsync(findQuery, cancellationToken);
+            return await _profiles.CountProfilesAsync(findQuery, cancellationToken);
         }
         catch (Exception ex)
         {

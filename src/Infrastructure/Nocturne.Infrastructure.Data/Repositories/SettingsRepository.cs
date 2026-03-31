@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Nocturne.Core.Contracts.Repositories;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Data.Entities;
 using Nocturne.Infrastructure.Data.Mappers;
@@ -8,7 +9,7 @@ namespace Nocturne.Infrastructure.Data.Repositories;
 /// <summary>
 /// PostgreSQL repository for Settings operations
 /// </summary>
-public class SettingsRepository
+public class SettingsRepository : ISettingsRepository
 {
     private readonly NocturneDbContext _context;
 
@@ -24,6 +25,8 @@ public class SettingsRepository
     /// <summary>
     /// Get all settings
     /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of all settings.</returns>
     public async Task<IEnumerable<Settings>> GetSettingsAsync(
         CancellationToken cancellationToken = default
     )
@@ -36,6 +39,12 @@ public class SettingsRepository
     /// <summary>
     /// Get settings with advanced filtering
     /// </summary>
+    /// <param name="count">The maximum number of settings to return.</param>
+    /// <param name="skip">The number of settings to skip.</param>
+    /// <param name="findQuery">Optional search query string.</param>
+    /// <param name="reverseResults">Whether to reverse the order of results.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of matching settings.</returns>
     public async Task<IEnumerable<Settings>> GetSettingsWithAdvancedFilterAsync(
         int count = 10,
         int skip = 0,
@@ -69,6 +78,9 @@ public class SettingsRepository
     /// <summary>
     /// Get a specific setting by ID
     /// </summary>
+    /// <param name="id">The unique identifier (GUID or legacy string ID).</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The setting, or null if not found.</returns>
     public async Task<Settings?> GetSettingsByIdAsync(
         string id,
         CancellationToken cancellationToken = default
@@ -95,6 +107,9 @@ public class SettingsRepository
     /// <summary>
     /// Get a specific setting by key
     /// </summary>
+    /// <param name="key">The setting key.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The setting, or null if not found.</returns>
     public async Task<Settings?> GetSettingsByKeyAsync(
         string key,
         CancellationToken cancellationToken = default
@@ -111,6 +126,9 @@ public class SettingsRepository
     /// <summary>
     /// Create multiple settings
     /// </summary>
+    /// <param name="settings">The collection of settings to create.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of created or updated settings.</returns>
     public async Task<IEnumerable<Settings>> CreateSettingsAsync(
         IEnumerable<Settings> settings,
         CancellationToken cancellationToken = default
@@ -149,6 +167,10 @@ public class SettingsRepository
     /// <summary>
     /// Update an existing setting
     /// </summary>
+    /// <param name="id">The unique identifier of the setting to update.</param>
+    /// <param name="settings">The updated setting data.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The updated setting, or null if not found.</returns>
     public async Task<Settings?> UpdateSettingsAsync(
         string id,
         Settings settings,
@@ -184,6 +206,9 @@ public class SettingsRepository
     /// <summary>
     /// Delete a setting by ID
     /// </summary>
+    /// <param name="id">The unique identifier of the setting to delete.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True if the setting was deleted, otherwise false.</returns>
     public async Task<bool> DeleteSettingsAsync(
         string id,
         CancellationToken cancellationToken = default
@@ -218,6 +243,9 @@ public class SettingsRepository
     /// <summary>
     /// Bulk delete settings with query
     /// </summary>
+    /// <param name="findQuery">The search query for deletion.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of deleted records.</returns>
     public async Task<long> BulkDeleteSettingsAsync(
         string findQuery,
         CancellationToken cancellationToken = default
@@ -251,6 +279,9 @@ public class SettingsRepository
     /// <summary>
     /// Count settings
     /// </summary>
+    /// <param name="findQuery">Optional search query string.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The total number of matching settings.</returns>
     public async Task<long> CountSettingsAsync(
         string? findQuery = null,
         CancellationToken cancellationToken = default

@@ -70,12 +70,15 @@ public class ResponseComparisonService : IResponseComparisonService
             ComparisonTimestamp = DateTimeOffset.UtcNow,
         };
 
+        // Sanitize user-controlled path to prevent log forging
+        var sanitizedPath = requestPath?.Replace("\r", "").Replace("\n", "");
+
         try
         {
             _logger.LogDebug(
                 "Starting response comparison for correlation {CorrelationId} on path {RequestPath}",
                 correlationId,
-                requestPath
+                sanitizedPath
             );
 
             // Check if both responses exist
@@ -257,7 +260,7 @@ public class ResponseComparisonService : IResponseComparisonService
         }
 
         // Check if response is too large for detailed comparison
-        var maxSize = _configuration.Value.MaxResponseSizeForComparison;
+        const long maxSize = 10 * 1024 * 1024; // 10MB
         if (nightscoutBody.Length > maxSize || nocturneBody.Length > maxSize)
         {
             result.BodyMatch = nightscoutBody.SequenceEqual(nocturneBody);

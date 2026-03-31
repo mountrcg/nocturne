@@ -1,15 +1,24 @@
 <script lang="ts">
   import { page } from "$app/state";
+  import { invalidateAll } from "$app/navigation";
+  import { onMount } from "svelte";
   import * as Sidebar from "$lib/components/ui/sidebar";
   import * as Collapsible from "$lib/components/ui/collapsible";
+  import * as Select from "$lib/components/ui/select";
   import {
     SidebarGlucoseWidget,
     SidebarNotifications,
     UserMenu,
   } from "./index";
   import LanguageSelector from "$lib/components/LanguageSelector.svelte";
-  import { updateLanguagePreference } from "$lib/data/user-preferences.remote";
+  import { updateLanguagePreference } from "$api/user-preferences.remote";
   import { hasLanguagePreference } from "$lib/stores/appearance-store.svelte";
+  import {
+    actingAs,
+    followerTargets,
+    type ActingAsTarget,
+  } from "$lib/stores/acting-as";
+  import { getMyTenants } from "$lib/api/generated/mytenants.generated.remote";
   import {
     Home,
     BarChart3,
@@ -31,6 +40,7 @@
     Plug,
     Sparkles,
     Calendar,
+    CalendarDays,
     BatteryFull,
     Sunrise,
     CheckCircle,
@@ -40,16 +50,90 @@
     Timer,
     Layers,
     ShieldCheck,
+    Building2,
+    Luggage,
+    HeartPulse,
+    ListChecks,
+    Shield,
+    Eye,
+    Users,
   } from "lucide-svelte";
   import type { AuthUser } from "$lib/stores/auth-store.svelte";
 
   interface Props {
     /** Current authenticated user (passed from layout data) */
     user?: AuthUser | null;
+    /** Number of tenants the user is a member of */
+    tenantCount?: number;
+    /** Effective permissions for the current user */
+    effectivePermissions?: string[];
   }
 
-  const { user = null }: Props = $props();
+  const { user = null, tenantCount = 0, effectivePermissions = [] }: Props = $props();
+
+  const canManageRoles = $derived(
+    effectivePermissions.includes("roles.manage") ||
+      effectivePermissions.includes("*"),
+  );
   const sidebar = Sidebar.useSidebar();
+
+  // Follower target selector state
+  let targets = $state<ActingAsTarget[]>([]);
+  let selectedValue = $state<string>("__self__");
+
+  /**
+   * Fetch available follower targets from the API. Gracefully handles errors.
+   */
+  async function loadFollowerTargets() {
+    try {
+      const tenants = await getMyTenants();
+      const fetched: ActingAsTarget[] = (tenants ?? [])
+        .filter((t): t is typeof t & { id: string } => !!t.id && !t.isDefault)
+        .map((t) => ({
+          subjectId: t.id,
+          displayName: t.displayName ?? null,
+          email: null,
+          scopes: [],
+          label: t.slug ?? null,
+        }));
+      targets = fetched;
+      followerTargets.set(fetched);
+    } catch {
+      // Silently fail
+    }
+  }
+
+  function handleTargetChange(value: string | undefined) {
+    if (!value) return;
+    selectedValue = value;
+
+    if (value === "__self__") {
+      actingAs.set(null);
+    } else {
+      const target = targets.find((t) => t.subjectId === value);
+      if (target) {
+        actingAs.set(target);
+      }
+    }
+
+    // Refresh all page data to reflect the new context
+    invalidateAll();
+  }
+
+  /**
+   * Format a target for display. Shows "{displayName} ({label})" if label is
+   * present, otherwise just "{displayName}".
+   */
+  function formatTargetLabel(target: ActingAsTarget): string {
+    const name = target.displayName || target.email || "Unknown";
+    return target.label ? `${name} (${target.label})` : name;
+  }
+
+  onMount(() => {
+    if (user) {
+      loadFollowerTargets();
+    }
+  });
 
   type NavItem = {
     title: string;
@@ -60,7 +144,8 @@
     children?: NavItem[];
   };
 
-  const navigation: NavItem[] = [
+  const navigation: NavItem[] = $derived.by(() => {
+    const items: NavItem[] = [
     {
       title: "Dashboard",
       href: "/",
@@ -83,10 +168,31 @@
       children: [
         { title: "Overview", href: "/reports", icon: PieChart, strict: true },
         { title: "AGP", href: "/reports/agp", icon: LineChart },
+        { title: "IDP", href: "/reports/idp", icon: Droplets },
         {
           title: "Executive Summary",
           href: "/reports/executive-summary",
           icon: FileText,
+        },
+        {
+          title: "Day in Review",
+          href: "/reports/day-in-review",
+          icon: Clock,
+        },
+        {
+          title: "Week to Week",
+          href: "/reports/week-to-week",
+          icon: Sunrise,
+        },
+        {
+          title: "Month to Month",
+          href: "/calendar",
+          icon: Calendar,
+        },
+        {
+          title: "Year Overview",
+          href: "/reports/year-overview",
+          icon: CalendarDays,
         },
         { title: "Readings", href: "/reports/readings", icon: Activity },
         { title: "Treatments", href: "/reports/treatments", icon: Syringe },
@@ -104,16 +210,6 @@
           title: "Battery",
           href: "/reports/battery",
           icon: BatteryFull,
-        },
-        {
-          title: "Day in Review",
-          href: "/reports/day-in-review",
-          icon: Clock,
-        },
-        {
-          title: "Week to Week",
-          href: "/reports/week-to-week",
-          icon: Sunrise,
         },
         {
           title: "Glucose Distribution",
@@ -148,6 +244,24 @@
       icon: Utensils,
     },
     {
+      title: "Tools",
+      icon: Luggage,
+      children: [
+        { title: "Packing", href: "/tools/packing", icon: Luggage },
+      ],
+    },
+    ];
+
+    if (tenantCount >= 2) {
+      items.push({
+        title: "Tenants",
+        href: "/tenants",
+        icon: Building2,
+      });
+    }
+
+    items.push(
+    {
       title: "Dev Tools",
       icon: Terminal,
       children: [
@@ -161,33 +275,54 @@
           title: "Test Endpoint Compatibility",
           href: "/compatibility/test",
           icon: TestTube,
-        }
+        },
       ],
     },
     {
       title: "Settings",
       icon: Settings,
       children: [
+        { title: "Setup", href: "/settings/setup", icon: ListChecks },
         { title: "Account", href: "/settings/account", icon: User },
+        {
+          title: "Patient Record",
+          href: "/settings/patient",
+          icon: HeartPulse,
+        },
         { title: "Appearance", href: "/settings/appearance", icon: Palette },
         { title: "Therapy", href: "/settings/profile", icon: Syringe },
         { title: "Features", href: "/settings/features", icon: Sparkles },
-        { title: "Data Quality", href: "/settings/data-quality", icon: ShieldCheck },
-        { title: "Alarms", href: "/settings/alarms", icon: Bell },
+        {
+          title: "Data Quality",
+          href: "/settings/data-quality",
+          icon: ShieldCheck,
+        },
+        { title: "Alerts", href: "/settings/alerts", icon: Bell },
         {
           title: "Notifications & Trackers",
           href: "/settings/trackers",
           icon: Timer,
         },
-        { title: "Connectors", href: "/settings/connectors", icon: Plug },
+        { title: "Connectors & Apps", href: "/settings/connectors", icon: Plug },
+        { title: "Members", href: "/settings/members", icon: Users },
+        ...(canManageRoles
+          ? [{ title: "Roles", href: "/settings/roles", icon: Shield }]
+          : []),
         {
           title: "Support & Community",
           href: "/settings/support",
           icon: HeartHandshake,
         },
+        {
+          title: "Tenant Management",
+          href: "/settings/admin/tenants",
+          icon: Building2,
+        },
       ],
-    },
-  ];
+    });
+
+    return items;
+  });
 
   // Track which collapsible menus are open
   let openMenus = $state<Record<string, boolean>>({});
@@ -212,11 +347,11 @@
     }
 
     if (item.href) {
-      return page.url.pathname.startsWith(item.href)
+      return page.url.pathname.startsWith(item.href);
     }
 
     if (item.children) {
-      return item.children.some(child => isActive(child));
+      return item.children.some((child) => isActive(child));
     }
 
     return false;
@@ -259,6 +394,43 @@
   </Sidebar.Group>
 
   <Sidebar.Separator />
+
+  <!-- Follower target selector (only visible when targets are available) -->
+  {#if targets.length > 0}
+    <div class="border-b px-3 py-2 group-data-[collapsible=icon]:hidden">
+      <p
+        class="mb-1.5 text-xs font-medium text-muted-foreground flex items-center gap-1.5"
+      >
+        <Eye class="h-3 w-3" />
+        Viewing data for
+      </p>
+      <Select.Root
+        type="single"
+        value={selectedValue}
+        onValueChange={handleTargetChange}
+      >
+        <Select.Trigger size="sm" class="w-full">
+          {#if selectedValue === "__self__"}
+            My Data
+          {:else}
+            {#each targets as target}
+              {#if target.subjectId === selectedValue}
+                {formatTargetLabel(target)}
+              {/if}
+            {/each}
+          {/if}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="__self__">My Data</Select.Item>
+          {#each targets as target}
+            <Select.Item value={target.subjectId}>
+              {formatTargetLabel(target)}
+            </Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+    </div>
+  {/if}
 
   <Sidebar.Content>
     <!-- Navigation -->
@@ -334,7 +506,8 @@
         <Sidebar.MenuItem class="group-data-[collapsible=icon]:hidden">
           <LanguageSelector
             onLanguageChange={user
-              ? (locale: string) => updateLanguagePreference({ preferredLanguage: locale })
+              ? (locale: string) =>
+                  updateLanguagePreference({ preferredLanguage: locale })
               : undefined}
           />
         </Sidebar.MenuItem>
@@ -342,7 +515,9 @@
       <Sidebar.MenuItem
         class="flex items-center gap-2 min-w-0 group-data-[collapsible=icon]:flex-col"
       >
-        <SidebarNotifications />
+        {#if user}
+          <SidebarNotifications />
+        {/if}
         <UserMenu
           {user}
           collapsed={sidebar.state === "collapsed"}

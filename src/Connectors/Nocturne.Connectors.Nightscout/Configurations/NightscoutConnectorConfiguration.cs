@@ -17,7 +17,19 @@ namespace Nocturne.Connectors.Nightscout.Configurations;
     SupportsHistoricalSync = true,
     MaxHistoricalDays = 365,
     SupportsManualSync = true,
-    SupportedDataTypes = [SyncDataType.Glucose, SyncDataType.Treatments]
+    SupportedDataTypes = [
+        SyncDataType.Glucose,
+        SyncDataType.ManualBG,
+        SyncDataType.Boluses,
+        SyncDataType.CarbIntake,
+        SyncDataType.BolusCalculations,
+        SyncDataType.Notes,
+        SyncDataType.DeviceEvents,
+        SyncDataType.Profiles,
+        SyncDataType.DeviceStatus,
+        SyncDataType.Food,
+        SyncDataType.Activity
+    ]
 )]
 public class NightscoutConnectorConfiguration : BaseConnectorConfiguration
 {
@@ -26,33 +38,18 @@ public class NightscoutConnectorConfiguration : BaseConnectorConfiguration
         ConnectSource = ConnectSource.Nightscout;
     }
 
-    [ConnectorProperty("Url",
-        Required = true,
-        RuntimeConfigurable = true,
-        Category = "Connection",
-        Description = "Nightscout site URL (e.g., https://my-nightscout.herokuapp.com)",
-        Format = "uri")]
+    [ConnectorProperty(ConnectorPropertyKey.Url, Required = true, Format = "uri")]
     public string Url { get; set; } = string.Empty;
 
-    [ConnectorProperty("ApiSecret",
-        Required = true,
-        Secret = true,
-        Description = "Nightscout API_SECRET or access token")]
+    [ConnectorProperty(ConnectorPropertyKey.ApiSecret, Required = true, Secret = true)]
     public string ApiSecret { get; set; } = string.Empty;
 
-    [ConnectorProperty("SyncTreatments",
-        RuntimeConfigurable = true,
-        Category = "Sync",
-        Description = "Whether to sync treatments from Nightscout",
-        DefaultValue = "true")]
-    public bool SyncTreatments { get; set; } = true;
-
-    [ConnectorProperty("MaxCount",
-        RuntimeConfigurable = true,
-        Category = "Advanced",
-        Description = "Maximum number of records to fetch per request",
-        DefaultValue = "1000",
-        MinValue = 100,
-        MaxValue = 10000)]
+    [ConnectorProperty(ConnectorPropertyKey.MaxCount, DefaultValue = "1000", MinValue = 100, MaxValue = 10000)]
     public int MaxCount { get; set; } = 1000;
+
+    [ConnectorProperty(ConnectorPropertyKey.WriteBackEnabled, DefaultValue = "false")]
+    public bool WriteBackEnabled { get; set; } = false;
+
+    [ConnectorProperty(ConnectorPropertyKey.WriteBackBatchSize, DefaultValue = "50", MinValue = 1, MaxValue = 500)]
+    public int WriteBackBatchSize { get; set; } = 50;
 }

@@ -45,7 +45,9 @@ public class AuthResult
 }
 
 /// <summary>
-/// Authentication context containing user identity and permissions
+/// Authentication context containing user identity and permissions.
+/// MemberScopeMiddleware enriches this with effective permissions from
+/// the RBAC system (role permissions + direct permissions).
 /// </summary>
 public class AuthContext
 {
@@ -63,6 +65,11 @@ public class AuthContext
     /// Subject (user/device) identifier
     /// </summary>
     public Guid? SubjectId { get; set; }
+
+    /// <summary>
+    /// Resolved tenant ID for this request
+    /// </summary>
+    public Guid? TenantId { get; set; }
 
     /// <summary>
     /// Subject name for display
@@ -113,6 +120,13 @@ public class AuthContext
     /// When the authentication expires
     /// </summary>
     public DateTimeOffset? ExpiresAt { get; set; }
+
+    /// <summary>
+    /// When true, data requests should only return data from the last 24 hours
+    /// (rolling window from current request time). Set for follower memberships
+    /// that have the 24-hour limit enabled.
+    /// </summary>
+    public bool LimitTo24Hours { get; set; }
 
     /// <summary>
     /// Create an unauthenticated context
@@ -193,5 +207,15 @@ public enum AuthType
     /// <summary>
     /// Session cookie
     /// </summary>
-    SessionCookie
+    SessionCookie,
+
+    /// <summary>
+    /// OAuth 2.0 access token (JWT with scope claims)
+    /// </summary>
+    OAuthAccessToken,
+
+    /// <summary>
+    /// Direct grant token (opaque API token with no OAuth client)
+    /// </summary>
+    DirectGrant
 }

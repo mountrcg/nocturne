@@ -15,7 +15,6 @@ public class PropertiesService : IPropertiesService
     private readonly IIobService _iobService;
     private readonly ICobService _cobService;
     private readonly IAr2Service _ar2Service;
-    private readonly IDirectionService _directionService;
 
     // Properties that should be filtered out for security
     private static readonly string[] SecureProperties =
@@ -34,8 +33,7 @@ public class PropertiesService : IPropertiesService
         ILogger<PropertiesService> logger,
         IIobService iobService,
         ICobService cobService,
-        IAr2Service ar2Service,
-        IDirectionService directionService
+        IAr2Service ar2Service
     )
     {
         _ddataService = ddataService;
@@ -43,7 +41,6 @@ public class PropertiesService : IPropertiesService
         _iobService = iobService;
         _cobService = cobService;
         _ar2Service = ar2Service;
-        _directionService = directionService;
     }
 
     /// <inheritdoc />
@@ -226,7 +223,7 @@ public class PropertiesService : IPropertiesService
             return;
 
         // Use the DirectionService for exact legacy delta calculation
-        var deltaInfo = _directionService.CalculateDelta(entries!, "mg/dl");
+        var deltaInfo = DirectionService.CalculateDelta(entries!, "mg/dl");
         if (deltaInfo == null)
             return;
 
@@ -255,7 +252,7 @@ public class PropertiesService : IPropertiesService
             return;
 
         // Use the DirectionService for exact legacy direction calculation
-        var directionInfo = _directionService.GetDirectionInfo(currentEntry);
+        var directionInfo = DirectionService.GetDirectionInfo(currentEntry);
 
         properties["direction"] = new Dictionary<string, object>
         {
@@ -316,30 +313,26 @@ public class PropertiesService : IPropertiesService
     {
         try
         {
-            Console.WriteLine($"DEBUG SetCobProperties: Starting...");
+            _logger.LogDebug("SetCobProperties: Starting");
             var treatments = ddata.Treatments?.ToList() ?? new List<Treatment>();
             var deviceStatus = ddata.DeviceStatus?.ToList() ?? new List<DeviceStatus>();
 
             if (!treatments.Any() && !deviceStatus.Any())
             {
-                Console.WriteLine(
-                    $"DEBUG SetCobProperties: No treatments or device status, returning"
-                );
+                _logger.LogDebug("SetCobProperties: No treatments or device status, returning");
                 return;
             }
 
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
             // Use full COB calculation service - NO SIMPLIFICATIONS
-            Console.WriteLine($"DEBUG SetCobProperties: Calling COB service...");
+            _logger.LogDebug("SetCobProperties: Calling COB service");
             var cobResult = _cobService.CobTotal(treatments, deviceStatus, null, now);
-            Console.WriteLine(
-                $"DEBUG SetCobProperties: COB service returned result, is null: {cobResult == null}"
-            );
+            _logger.LogDebug("SetCobProperties: COB service returned result, is null: {IsNull}", cobResult == null);
 
             if (cobResult == null)
             {
-                Console.WriteLine($"DEBUG SetCobProperties: COB result is null, returning");
+                _logger.LogDebug("SetCobProperties: COB result is null, returning");
                 return;
             }
 
@@ -354,12 +347,11 @@ public class PropertiesService : IPropertiesService
                     .Treatments?.Select(t => new { t.Mills, t.Carbs })
                     .ToList(),
             };
-            Console.WriteLine($"DEBUG SetCobProperties: COB property set successfully");
+            _logger.LogDebug("SetCobProperties: COB property set successfully");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"DEBUG SetCobProperties: Exception: {ex.Message}");
-            _logger.LogError(ex, "Error setting COB properties");
+            _logger.LogError(ex, "SetCobProperties failed");
             // Don't throw, just skip setting COB properties
         }
     }
@@ -523,37 +515,33 @@ public class PropertiesService : IPropertiesService
     {
         try
         {
-            Console.WriteLine($"DEBUG SetBasalProperties: Starting...");
+            _logger.LogDebug("SetBasalProperties: Starting");
             var profile = ddata.Profiles?.OrderByDescending(p => p.Mills).FirstOrDefault();
-            Console.WriteLine($"DEBUG SetBasalProperties: Profile found: {profile != null}");
+            _logger.LogDebug("SetBasalProperties: Profile found: {ProfileFound}", profile != null);
             if (profile?.Store == null)
             {
-                Console.WriteLine($"DEBUG SetBasalProperties: No profile or store, returning");
+                _logger.LogDebug("SetBasalProperties: No profile or store, returning");
                 return;
             }
 
             var defaultProfile = profile.DefaultProfile ?? "Default";
-            Console.WriteLine($"DEBUG SetBasalProperties: Default profile: {defaultProfile}");
+            _logger.LogDebug("SetBasalProperties: Default profile: {DefaultProfile}", defaultProfile);
             if (
                 !profile.Store.TryGetValue(defaultProfile, out var profileData)
                 || profileData?.Basal == null
             )
             {
-                Console.WriteLine($"DEBUG SetBasalProperties: No profile data or basal, returning");
+                _logger.LogDebug("SetBasalProperties: No profile data or basal, returning");
                 return;
             }
 
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var treatments = ddata.Treatments ?? new List<Treatment>();
-            Console.WriteLine(
-                $"DEBUG SetBasalProperties: Now: {now}, Treatments count: {treatments.Count}"
-            );
+            _logger.LogDebug("SetBasalProperties: Now: {Now}, Treatments count: {TreatmentCount}", now, treatments.Count);
 
             // Calculate current basal rate with temp treatments - exact legacy algorithm
             var tempBasalResult = CalculateTempBasal(now, profileData, treatments);
-            Console.WriteLine(
-                $"DEBUG SetBasalProperties: TempBasal result: Basal={tempBasalResult.Basal}, TotalBasal={tempBasalResult.TotalBasal}"
-            );
+            _logger.LogDebug("SetBasalProperties: TempBasal result: Basal={Basal}, TotalBasal={TotalBasal}", tempBasalResult.Basal, tempBasalResult.TotalBasal);
 
             // Build temp markers like legacy: T for temp basal, C for combo bolus
             var tempMark = "";
@@ -562,7 +550,7 @@ public class PropertiesService : IPropertiesService
             tempMark += !string.IsNullOrEmpty(tempMark) ? ": " : "";
 
             var displayValue = $"{tempMark}{tempBasalResult.TotalBasal:F3}U";
-            Console.WriteLine($"DEBUG SetBasalProperties: Display value: {displayValue}");
+            _logger.LogDebug("SetBasalProperties: Display value: {DisplayValue}", displayValue);
 
             properties["basal"] = new Dictionary<string, object>
             {
@@ -575,13 +563,11 @@ public class PropertiesService : IPropertiesService
                     ["totalbasal"] = tempBasalResult.TotalBasal,
                 },
             };
-            Console.WriteLine($"DEBUG SetBasalProperties: Basal property set successfully");
+            _logger.LogDebug("SetBasalProperties: Basal property set successfully");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error setting basal properties");
-            Console.WriteLine($"DEBUG: Exception in SetBasalProperties: {ex.Message}");
-            Console.WriteLine($"DEBUG: Stack trace: {ex.StackTrace}");
+            _logger.LogError(ex, "SetBasalProperties failed");
             // Don't throw, just skip setting basal properties
         }
     }

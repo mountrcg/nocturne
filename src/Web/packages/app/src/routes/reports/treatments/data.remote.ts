@@ -1,229 +1,225 @@
 /**
- * Remote functions for treatments management
- * Uses SvelteKit's experimental remote function forms pattern for progressive enhancement
+ * Remote functions for treatments report page.
+ * Data comes from V4 decomposed endpoints (boluses, carb intakes, BG checks, notes, device events).
  */
 import { z } from 'zod';
-import { getRequestEvent, form, command } from '$app/server';
+import { getRequestEvent, form, command, query } from '$app/server';
 import { invalid } from '@sveltejs/kit';
-
-import type { Treatment } from '$lib/api';
+import type { Bolus, CarbIntake, BGCheck, Note, DeviceEvent } from '$lib/api';
+import { getProfileSummary } from '$api/generated/profiles.generated.remote';
+import { getLocalDayBoundariesUtc } from '$lib/utils/timezone';
 
 /**
- * Update a treatment form
+ * Input schema for date range queries (matches reports layout pattern)
  */
-export const createTreatmentForm = form(
+const DateRangeSchema = z.object({
+	days: z.number().nullish(),
+	from: z.string().nullish(),
+	to: z.string().nullish(),
+});
+
+function calculateDateRange(input: z.infer<typeof DateRangeSchema> | undefined, timezone?: string | null) {
+	let startDateStr: string;
+	let endDateStr: string;
+
+	if (input?.from && input?.to) {
+		startDateStr = input.from.split('T')[0];
+		endDateStr = input.to.split('T')[0];
+	} else if (input?.days) {
+		const end = new Date();
+		const start = new Date(end);
+		start.setDate(end.getDate() - (input.days - 1));
+		startDateStr = start.toISOString().split('T')[0];
+		endDateStr = end.toISOString().split('T')[0];
+	} else {
+		const end = new Date();
+		const start = new Date(end);
+		start.setDate(end.getDate() - 7);
+		startDateStr = start.toISOString().split('T')[0];
+		endDateStr = end.toISOString().split('T')[0];
+	}
+
+	const { start: startDate } = getLocalDayBoundariesUtc(startDateStr, timezone);
+	const { end: endDate } = getLocalDayBoundariesUtc(endDateStr, timezone);
+
+	return { startDate, endDate };
+}
+
+/**
+ * Get all v4 entry types for the treatments page.
+ * Fetches boluses, carb intakes, BG checks, notes, and device events in parallel.
+ * Treatment summary comes from the backend via calculateTreatmentSummary.
+ */
+export const getTreatmentsData = query(
+	DateRangeSchema.optional(),
+	async (input) => {
+		const { locals } = getRequestEvent();
+		const { apiClient } = locals;
+		const profile = await getProfileSummary(undefined);
+		const timezone = profile?.therapySettings?.[0]?.timezone;
+		const { startDate, endDate } = calculateDateRange(input, timezone);
+		const [bolusResponse, carbResponse, bgCheckResponse, noteResponse, deviceEventResponse] =
+			await Promise.all([
+				apiClient.boluses.getAll(startDate, endDate, 10000),
+				apiClient.nutrition.getCarbIntakes(startDate, endDate, 10000),
+				apiClient.bGChecks.getAll(startDate, endDate, 10000),
+				apiClient.notes.getAll(startDate, endDate, 10000),
+				apiClient.deviceEvents.getAll(startDate, endDate, 10000),
+			]);
+
+		const boluses = bolusResponse.data ?? [];
+		const carbIntakes = carbResponse.data ?? [];
+		const bgChecks = bgCheckResponse.data ?? [];
+		const notes = noteResponse.data ?? [];
+		const deviceEvents = deviceEventResponse.data ?? [];
+
+		const treatmentSummary =
+			boluses.length > 0 || carbIntakes.length > 0
+				? await apiClient.statistics.calculateTreatmentSummary({ boluses, carbIntakes })
+				: null;
+
+		return {
+			boluses,
+			carbIntakes,
+			bgChecks,
+			notes,
+			deviceEvents,
+			treatmentSummary,
+			dateRange: {
+				from: startDate.toISOString(),
+				to: endDate.toISOString(),
+			},
+		};
+	}
+);
+
+/**
+ * Delete a single entry form (v4: dispatches to the correct endpoint by kind)
+ */
+export const deleteEntryForm = form(
 	z.object({
-		treatmentData: z.string().min(1, 'Treatment data is required'),
+		entryId: z.string().min(1, 'Entry ID is required'),
+		entryKind: z.enum(['bolus', 'carbs', 'bgCheck', 'note', 'deviceEvent']),
 	}),
-	async ({ treatmentData }, issue) => {
+	async ({ entryId, entryKind }, issue) => {
 		const { locals } = getRequestEvent();
 		const { apiClient } = locals;
 
 		try {
-			const parsedTreatment = JSON.parse(treatmentData) as Treatment;
-			const createdTreatment = await apiClient.treatments.createTreatment(parsedTreatment);
+			switch (entryKind) {
+				case 'bolus':
+					await apiClient.boluses.delete(entryId);
+					break;
+				case 'carbs':
+					await apiClient.nutrition.deleteCarbIntake(entryId);
+					break;
+				case 'bgCheck':
+					await apiClient.bGChecks.delete(entryId);
+					break;
+				case 'note':
+					await apiClient.notes.delete(entryId);
+					break;
+				case 'deviceEvent':
+					await apiClient.deviceEvents.delete(entryId);
+					break;
+			}
 
 			return {
 				success: true,
-				message: 'Treatment created successfully',
-				createdTreatment,
+				message: 'Entry deleted successfully',
+				deletedEntryId: entryId,
 			};
 		} catch (error) {
-			console.error('Error creating treatment:', error);
-			invalid(issue.treatmentData('Failed to create treatment. Please try again.'));
-		}
-	}
-);
-
-export const updateTreatmentForm = form(
-	z.object({
-		treatmentId: z.string().min(1, 'Treatment ID is required'),
-		treatmentData: z.string().min(1, 'Treatment data is required'),
-	}),
-	async ({ treatmentId, treatmentData }, issue) => {
-		const { locals } = getRequestEvent();
-		const { apiClient } = locals;
-
-		try {
-			const parsedTreatment = JSON.parse(treatmentData) as Treatment;
-			const updatedTreatment = await apiClient.treatments.updateTreatment(
-				treatmentId,
-				parsedTreatment
-			);
-
-			return {
-				success: true,
-				message: 'Treatment updated successfully',
-				updatedTreatment,
-			};
-		} catch (error) {
-			console.error('Error updating treatment:', error);
-			invalid(issue.treatmentData('Failed to update treatment. Please try again.'));
+			console.error('Error deleting entry:', error);
+			invalid(issue.entryId('Failed to delete entry. Please try again.'));
 		}
 	}
 );
 
 /**
- * Delete a single treatment form
+ * Bulk delete entries command (v4: dispatches each item by kind)
  */
-export const deleteTreatmentForm = form(
-	z.object({
-		treatmentId: z.string().min(1, 'Treatment ID is required'),
-	}),
-	async ({ treatmentId }, issue) => {
+export const bulkDeleteEntries = command(
+	z.array(
+		z.object({
+			id: z.string(),
+			kind: z.enum(['bolus', 'carbs', 'bgCheck', 'note', 'deviceEvent']),
+		})
+	),
+	async (items) => {
 		const { locals } = getRequestEvent();
 		const { apiClient } = locals;
-
-		try {
-			await apiClient.treatments.deleteTreatment(treatmentId);
-
-			return {
-				success: true,
-				message: 'Treatment deleted successfully',
-				deletedTreatmentId: treatmentId,
-			};
-		} catch (error) {
-			console.error('Error deleting treatment:', error);
-			invalid(issue.treatmentId('Failed to delete treatment. Please try again.'));
-		}
-	}
-);
-
-/**
- * Bulk delete treatments form
- * Accepts comma-separated treatment IDs as a single string
- */
-export const bulkDeleteTreatmentsForm = form(
-	z.object({
-		treatmentIds: z.string().min(1, 'At least one treatment ID is required'),
-	}),
-	async ({ treatmentIds: treatmentIdsString }) => {
-		const { locals } = getRequestEvent();
-		const { apiClient } = locals;
-
-		// Parse the comma-separated IDs
-		const treatmentIds = treatmentIdsString.split(',').filter(Boolean);
-
-		if (treatmentIds.length === 0) {
-			invalid('At least one treatment ID is required');
-		}
 
 		const deletedIds: string[] = [];
 		const failedIds: string[] = [];
 
-		// Delete treatments sequentially to avoid overwhelming the server
-		for (const treatmentId of treatmentIds) {
+		for (const item of items) {
 			try {
-				await apiClient.treatments.deleteTreatment(treatmentId);
-				deletedIds.push(treatmentId);
-			} catch (error) {
-				console.error(`Error deleting treatment ${treatmentId}:`, error);
-				failedIds.push(treatmentId);
+				switch (item.kind) {
+					case 'bolus':
+						await apiClient.boluses.delete(item.id);
+						break;
+					case 'carbs':
+						await apiClient.nutrition.deleteCarbIntake(item.id);
+						break;
+					case 'bgCheck':
+						await apiClient.bGChecks.delete(item.id);
+						break;
+					case 'note':
+						await apiClient.notes.delete(item.id);
+						break;
+					case 'deviceEvent':
+						await apiClient.deviceEvents.delete(item.id);
+						break;
+				}
+				deletedIds.push(item.id);
+			} catch (err) {
+				console.error(`Error deleting ${item.kind} ${item.id}:`, err);
+				failedIds.push(item.id);
 			}
 		}
 
 		if (failedIds.length > 0) {
-			invalid(`Failed to delete ${failedIds.length} of ${treatmentIds.length} treatments`);
+			return {
+				success: false,
+				message: `Failed to delete ${failedIds.length} of ${items.length} entries`,
+				deletedEntryIds: deletedIds,
+				failedEntryIds: failedIds,
+			};
 		}
 
 		return {
 			success: true,
-			message: `Successfully deleted ${deletedIds.length} treatment${deletedIds.length !== 1 ? 's' : ''}`,
-			deletedTreatmentIds: deletedIds,
+			message: `Successfully deleted ${deletedIds.length} entr${deletedIds.length !== 1 ? 'ies' : 'y'}`,
+			deletedEntryIds: deletedIds,
 		};
 	}
 );
 
-// Keep command versions for programmatic use (backwards compatibility)
-
 /**
- * Create a treatment command (for programmatic use)
+ * Update a single entry (v4: dispatches to the correct endpoint by kind)
  */
-export const createTreatment = command(
+export const updateEntry = command(
 	z.object({
-		treatmentData: z.any(), // Full Treatment object
+		kind: z.enum(['bolus', 'carbs', 'bgCheck', 'note', 'deviceEvent']),
+		id: z.string().min(1),
+		data: z.record(z.string(), z.unknown()),
 	}),
-	async ({ treatmentData }) => {
+	async ({ kind, id, data }) => {
 		const { locals } = getRequestEvent();
 		const { apiClient } = locals;
 
-		const createdTreatment = await apiClient.treatments.createTreatment(treatmentData);
-
-		return {
-			message: 'Treatment created successfully',
-			createdTreatment,
-		};
-	}
-);
-
-/**
- * Update a treatment command (for programmatic use)
- */
-export const updateTreatment = command(
-	z.object({
-		treatmentId: z.string(),
-		treatmentData: z.any(), // Full Treatment object
-	}),
-	async ({ treatmentId, treatmentData }) => {
-		const { locals } = getRequestEvent();
-		const { apiClient } = locals;
-
-		const updatedTreatment = await apiClient.treatments.updateTreatment(treatmentId, treatmentData);
-
-		return {
-			message: 'Treatment updated successfully',
-			updatedTreatment,
-		};
-	}
-);
-
-/**
- * Delete a single treatment command (for programmatic use)
- */
-export const deleteTreatment = command(z.string(), async (treatmentId) => {
-	const { locals } = getRequestEvent();
-	const { apiClient } = locals;
-
-	await apiClient.treatments.deleteTreatment(treatmentId);
-
-	return {
-		message: 'Treatment deleted successfully',
-		deletedTreatmentId: treatmentId,
-	};
-});
-
-/**
- * Bulk delete treatments command (for programmatic use)
- */
-export const bulkDeleteTreatments = command(z.array(z.string()), async (treatmentIds) => {
-	const { locals } = getRequestEvent();
-	const { apiClient } = locals;
-
-	const deletedIds: string[] = [];
-	const failedIds: string[] = [];
-
-	for (const treatmentId of treatmentIds) {
-		try {
-			await apiClient.treatments.deleteTreatment(treatmentId);
-			deletedIds.push(treatmentId);
-		} catch (err) {
-			console.error(`Error deleting treatment ${treatmentId}:`, err);
-			failedIds.push(treatmentId);
+		switch (kind) {
+			case 'bolus':
+				return await apiClient.boluses.update(id, data as Bolus);
+			case 'carbs':
+				return await apiClient.nutrition.updateCarbIntake(id, data as CarbIntake);
+			case 'bgCheck':
+				return await apiClient.bGChecks.update(id, data as BGCheck);
+			case 'note':
+				return await apiClient.notes.update(id, data as Note);
+			case 'deviceEvent':
+				return await apiClient.deviceEvents.update(id, data as DeviceEvent);
 		}
 	}
-
-	if (failedIds.length > 0) {
-		return {
-			success: false,
-			message: `Failed to delete ${failedIds.length} of ${treatmentIds.length} treatments`,
-			deletedTreatmentIds: deletedIds,
-			failedTreatmentIds: failedIds,
-		};
-	}
-
-	return {
-		success: true,
-		message: `Successfully deleted ${deletedIds.length} treatment${deletedIds.length !== 1 ? 's' : ''}`,
-		deletedTreatmentIds: deletedIds,
-	};
-});
+);

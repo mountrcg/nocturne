@@ -1,6 +1,6 @@
 import type { Handle } from "@sveltejs/kit";
 import { randomUUID } from "$lib/utils";
-import { ApiClient } from "$lib/api/api-client";
+import { ApiClient } from "$lib/api/api-client.generated";
 import type { HandleServerError } from "@sveltejs/kit";
 import { env } from "$env/dynamic/private";
 import { env as publicEnv } from "$env/dynamic/public";
@@ -15,6 +15,7 @@ import * as js from '../../../locales/js.loader.server.js'
 import { locales } from '../../../locales/data.js'
 import supportedLocales from '../../../supportedLocales.json';
 import { LANGUAGE_COOKIE_NAME } from "$lib/stores/appearance-store.svelte";
+import { isPublicRoute } from "$lib/config/public-routes";
 
 // load at server startup
 loadLocales(main.key, main.loadIDs, main.loadCatalog, locales)
@@ -48,7 +49,12 @@ function getHashedApiSecret(): string | null {
 function createServerApiClient(
   baseUrl: string,
   fetchFn: typeof fetch,
-  options?: { accessToken?: string; refreshToken?: string; hashedSecret?: string | null }
+  options?: {
+    accessToken?: string;
+    refreshToken?: string;
+    hashedSecret?: string | null;
+    extraHeaders?: Record<string, string>;
+  }
 ): ApiClient {
   const httpClient = {
     fetch: async (url: RequestInfo, init?: RequestInit): Promise<Response> => {
@@ -57,6 +63,13 @@ function createServerApiClient(
       // Add the hashed API secret as authentication
       if (options?.hashedSecret) {
         headers.set("api-secret", options.hashedSecret);
+      }
+
+      // Forward extra headers (e.g., X-Acting-As for follower context)
+      if (options?.extraHeaders) {
+        for (const [key, value] of Object.entries(options.extraHeaders)) {
+          headers.set(key, value);
+        }
       }
 
       // Forward auth cookies if provided (both access and refresh for token refresh flow)
@@ -129,6 +142,26 @@ const authHandle: Handle = async ({ event, resolve }) => {
 
       event.locals.user = user;
       event.locals.isAuthenticated = true;
+
+      // Fetch effective permissions (granted scopes) for the current tenant
+      try {
+        const permUrl = new URL("/api/v4/me/permissions", apiBaseUrl);
+        const permHeaders = new Headers();
+        if (getHashedApiSecret()) {
+          permHeaders.set("api-secret", getHashedApiSecret()!);
+        }
+        const permCookies: string[] = [];
+        if (accessToken) permCookies.push(`${AUTH_COOKIE_NAMES.accessToken}=${accessToken}`);
+        if (refreshToken) permCookies.push(`${AUTH_COOKIE_NAMES.refreshToken}=${refreshToken}`);
+        if (permCookies.length > 0) permHeaders.set("Cookie", permCookies.join("; "));
+
+        const permResponse = await fetch(permUrl.toString(), { headers: permHeaders });
+        if (permResponse.ok) {
+          event.locals.effectivePermissions = await permResponse.json();
+        }
+      } catch {
+        // Non-fatal — permissions will default to empty
+      }
     }
   } catch (error) {
     // Log but don't fail the request - user will be treated as unauthenticated
@@ -138,10 +171,70 @@ const authHandle: Handle = async ({ event, resolve }) => {
   return resolve(event);
 };
 
+/**
+ * Site security handler - enforces authentication when required, detects setup/recovery mode.
+ * Uses shared public route list to determine which paths bypass all gates.
+ */
+const siteSecurityHandle: Handle = async ({ event, resolve }) => {
+  const apiBaseUrl = getApiBaseUrl();
+
+  if (!apiBaseUrl || isPublicRoute(event.url.pathname)) {
+    return resolve(event);
+  }
+
+  try {
+    if (!event.locals.siteSecurityChecked) {
+      const apiClient = createServerApiClient(apiBaseUrl, fetch, {
+        hashedSecret: getHashedApiSecret(),
+      });
+
+      const status = await apiClient.status.getStatus();
+      const requireAuth = status?.settings?.["requireAuthentication"] === true;
+
+      event.locals.requireAuthentication = requireAuth;
+      event.locals.siteSecurityChecked = true;
+    }
+
+    if (event.locals.requireAuthentication && !event.locals.isAuthenticated) {
+      const returnUrl = encodeURIComponent(event.url.pathname + event.url.search);
+      return new Response(null, {
+        status: 303,
+        headers: {
+          Location: `/auth/login?returnUrl=${returnUrl}`,
+        },
+      });
+    }
+  } catch (error) {
+    if (error && typeof error === "object" && "status" in error && (error as any).status === 503) {
+      try {
+        const body = JSON.parse((error as any).response ?? "{}");
+        if (body.setupRequired) {
+          return new Response(null, {
+            status: 303,
+            headers: { Location: "/settings/setup/passkey" },
+          });
+        }
+        if (body.recoveryMode) {
+          return new Response(null, {
+            status: 303,
+            headers: { Location: "/auth/recovery" },
+          });
+        }
+      } catch {
+        // Couldn't parse, fall through
+      }
+    }
+    console.error("Failed to check site security settings:", error);
+  }
+
+  return resolve(event);
+};
+
 // Proxy handler for /api requests
 const proxyHandle: Handle = async ({ event, resolve }) => {
-  // Check if the request is for /api
-  if (event.url.pathname.startsWith("/api")) {
+  // Check if the request is for /api (but not SvelteKit-handled routes like webhooks and bot dispatch)
+  const path = event.url.pathname;
+  if (path.startsWith("/api") && !path.startsWith("/api/v4/webhooks") && !path.startsWith("/api/v4/bot")) {
     const apiBaseUrl = getApiBaseUrl();
     if (!apiBaseUrl) {
       throw new Error(
@@ -160,17 +253,9 @@ const proxyHandle: Handle = async ({ event, resolve }) => {
       headers.set("api-secret", hashedSecret);
     }
 
-    // Debug: Log all cookies SvelteKit sees
-    const allCookies = event.request.headers.get("cookie");
-    console.log(`[PROXY] Request to ${event.url.pathname}`);
-    console.log(`[PROXY] All cookies from request: ${allCookies || "(none)"}`);
-
     // Forward both access and refresh tokens for authentication and token refresh
     const accessToken = event.cookies.get(AUTH_COOKIE_NAMES.accessToken);
     const refreshToken = event.cookies.get(AUTH_COOKIE_NAMES.refreshToken);
-    console.log(`[PROXY] Access token: ${accessToken ? accessToken.substring(0, 20) + "..." : "(not found)"}`);
-    console.log(`[PROXY] Refresh token: ${refreshToken ? refreshToken.substring(0, 20) + "..." : "(not found)"}`);
-
     const cookies: string[] = [];
     if (accessToken) {
       cookies.push(`${AUTH_COOKIE_NAMES.accessToken}=${accessToken}`);
@@ -180,9 +265,6 @@ const proxyHandle: Handle = async ({ event, resolve }) => {
     }
     if (cookies.length > 0) {
       headers.set("Cookie", cookies.join("; "));
-      console.log(`[PROXY] Forwarding ${cookies.length} auth cookie(s) to backend`);
-    } else {
-      console.log(`[PROXY] No auth cookies to forward`);
     }
 
     const proxyResponse = await fetch(targetUrl.toString(), {
@@ -193,7 +275,6 @@ const proxyHandle: Handle = async ({ event, resolve }) => {
         : undefined,
     });
 
-    console.log(`[PROXY] Response status: ${proxyResponse.status}`);
 
     // Return the proxied response
     return new Response(proxyResponse.body, {
@@ -218,12 +299,19 @@ const apiClientHandle: Handle = async ({ event, resolve }) => {
   const accessToken = event.cookies.get(AUTH_COOKIE_NAMES.accessToken);
   const refreshToken = event.cookies.get(AUTH_COOKIE_NAMES.refreshToken);
 
+  // Forward X-Acting-As header if present (follower context)
+  const extraHeaders: Record<string, string> = {};
+  const actingAs = event.request.headers.get("x-acting-as");
+  if (actingAs) {
+    extraHeaders["X-Acting-As"] = actingAs;
+  }
 
   // Create API client with SvelteKit's fetch, auth headers, and both tokens
   event.locals.apiClient = createServerApiClient(apiBaseUrl, event.fetch, {
     accessToken,
     refreshToken,
     hashedSecret: getHashedApiSecret(),
+    extraHeaders,
   });
 
   return resolve(event);
@@ -344,5 +432,5 @@ export const locale: Handle = async ({ event, resolve }) => {
   return await runWithLocale(locale, () => resolve(event));
 }
 
-// Chain the auth handler, proxy handler, and API client handler
-export const handle: Handle = sequence(authHandle, proxyHandle, apiClientHandle, locale);
+// Chain the auth handler, site security handler, proxy handler, and API client handler
+export const handle: Handle = sequence(authHandle, siteSecurityHandle, proxyHandle, apiClientHandle, locale);

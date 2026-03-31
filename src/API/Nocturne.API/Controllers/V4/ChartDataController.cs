@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using OpenApi.Remote.Attributes;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models;
 
@@ -34,6 +35,8 @@ public class ChartDataController : ControllerBase
     /// state spans, system events, tracker markers, and glucose readings.
     /// </summary>
     [HttpGet("dashboard")]
+    [RemoteQuery]
+    [ResponseCache(Duration = 60, VaryByQueryKeys = new[] { "*" })]
     [ProducesResponseType(typeof(DashboardChartData), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
@@ -47,10 +50,10 @@ public class ChartDataController : ControllerBase
         try
         {
             if (endTime <= startTime)
-                return BadRequest(new { error = "endTime must be greater than startTime" });
+                return Problem(detail: "endTime must be greater than startTime", statusCode: 400, title: "Bad Request");
 
             if (intervalMinutes < 1 || intervalMinutes > 60)
-                return BadRequest(new { error = "intervalMinutes must be between 1 and 60" });
+                return Problem(detail: "intervalMinutes must be between 1 and 60", statusCode: 400, title: "Bad Request");
 
             var result = await _chartDataService.GetDashboardChartDataAsync(
                 startTime,
@@ -64,7 +67,7 @@ public class ChartDataController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error calculating dashboard chart data");
-            return StatusCode(500, new { error = "Internal server error" });
+            return Problem(detail: "Internal server error", statusCode: 500, title: "Internal Server Error");
         }
     }
 }

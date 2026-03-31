@@ -2,7 +2,8 @@ using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using Nocturne.API.Attributes;
+using OpenApi.Remote.Attributes;
+using Nocturne.Core.Models.Authorization;
 using Nocturne.Core.Models.Configuration;
 
 namespace Nocturne.API.Controllers;
@@ -18,7 +19,6 @@ namespace Nocturne.API.Controllers;
 [AllowAnonymous]
 public class WellKnownController : ControllerBase
 {
-    private readonly LocalIdentityOptions _localOptions;
     private readonly JwtOptions _jwtOptions;
     private readonly OidcOptions _oidcOptions;
 
@@ -26,12 +26,10 @@ public class WellKnownController : ControllerBase
     /// Creates a new instance of WellKnownController
     /// </summary>
     public WellKnownController(
-        IOptions<LocalIdentityOptions> localOptions,
         IOptions<JwtOptions> jwtOptions,
         IOptions<OidcOptions> oidcOptions
     )
     {
-        _localOptions = localOptions.Value;
         _jwtOptions = jwtOptions.Value;
         _oidcOptions = oidcOptions.Value;
     }
@@ -53,9 +51,7 @@ public class WellKnownController : ControllerBase
                 TokenEndpoint = $"{baseUrl}/auth/local/token",
                 UserinfoEndpoint = $"{baseUrl}/auth/userinfo",
                 JwksUri = $"{baseUrl}/.well-known/jwks.json",
-                RegistrationEndpoint = _localOptions.Registration.AllowRegistration
-                    ? $"{baseUrl}/auth/local/register"
-                    : null,
+                RegistrationEndpoint = null,
                 ScopesSupported = new[] { "openid", "profile", "email", "offline_access" },
                 ResponseTypesSupported = new[]
                 {
@@ -124,7 +120,8 @@ public class WellKnownController : ControllerBase
     }
 
     /// <summary>
-    /// OAuth 2.0 Authorization Server Metadata
+    /// OAuth 2.0 Authorization Server Metadata (RFC 8414).
+    /// Includes Nocturne's OAuth scope taxonomy and supported grant types.
     /// </summary>
     [HttpGet("oauth-authorization-server")]
     [ProducesResponseType(typeof(OAuthAuthorizationServerMetadata), StatusCodes.Status200OK)]
@@ -136,21 +133,22 @@ public class WellKnownController : ControllerBase
             new OAuthAuthorizationServerMetadata
             {
                 Issuer = _jwtOptions.Issuer,
-                AuthorizationEndpoint = $"{baseUrl}/auth/local/login",
-                TokenEndpoint = $"{baseUrl}/auth/local/token",
-                RevocationEndpoint = $"{baseUrl}/auth/logout",
-                IntrospectionEndpoint = $"{baseUrl}/auth/introspect",
+                AuthorizationEndpoint = $"{baseUrl}/api/oauth/authorize",
+                TokenEndpoint = $"{baseUrl}/api/oauth/token",
+                DeviceAuthorizationEndpoint = $"{baseUrl}/api/oauth/device",
+                RevocationEndpoint = $"{baseUrl}/api/oauth/revoke",
+                IntrospectionEndpoint = $"{baseUrl}/api/oauth/introspect",
                 JwksUri = $"{baseUrl}/.well-known/jwks.json",
-                ResponseTypesSupported = new[] { "code", "token" },
-                GrantTypesSupported = new[] { "authorization_code", "refresh_token", "password" },
-                TokenEndpointAuthMethodsSupported = new[]
+                ResponseTypesSupported = new[] { "code" },
+                GrantTypesSupported = new[]
                 {
-                    "client_secret_basic",
-                    "client_secret_post",
-                    "none",
+                    "authorization_code",
+                    "refresh_token",
+                    "urn:ietf:params:oauth:grant-type:device_code",
                 },
-                ScopesSupported = new[] { "openid", "profile", "email", "offline_access" },
-                CodeChallengeMethodsSupported = new[] { "plain", "S256" },
+                TokenEndpointAuthMethodsSupported = new[] { "none" },
+                ScopesSupported = OAuthScopes.ValidRequestScopes.OrderBy(s => s).ToArray(),
+                CodeChallengeMethodsSupported = new[] { "S256" },
                 ServiceDocumentation = "https://github.com/nightscout/nocturne",
             }
         );
@@ -226,6 +224,7 @@ public class OAuthAuthorizationServerMetadata
     public string Issuer { get; set; } = string.Empty;
     public string AuthorizationEndpoint { get; set; } = string.Empty;
     public string TokenEndpoint { get; set; } = string.Empty;
+    public string? DeviceAuthorizationEndpoint { get; set; }
     public string? RevocationEndpoint { get; set; }
     public string? IntrospectionEndpoint { get; set; }
     public string JwksUri { get; set; } = string.Empty;

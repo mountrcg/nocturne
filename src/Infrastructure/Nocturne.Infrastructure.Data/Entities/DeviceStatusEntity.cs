@@ -8,8 +8,17 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// Maps to Nocturne.Core.Models.DeviceStatus
 /// </summary>
 [Table("devicestatus")]
-public class DeviceStatusEntity
+public class DeviceStatusEntity : ITenantScoped
 {
+    /// <summary>
+    /// Identifier of the tenant this device status belongs to
+    /// </summary>
+    /// <summary>
+    /// The unique identifier of the tenant this record belongs to.
+    /// </summary>
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
+
     /// <summary>
     /// Primary key - UUID Version 7 for time-ordered, globally unique identification
     /// </summary>
@@ -39,7 +48,7 @@ public class DeviceStatusEntity
     /// <summary>
     /// UTC offset in minutes
     /// </summary>
-    [Column("utcOffset")]
+    [Column("utc_offset")]
     public int? UtcOffset { get; set; }
 
     /// <summary>
@@ -52,7 +61,7 @@ public class DeviceStatusEntity
     /// <summary>
     /// Whether the device is currently charging
     /// </summary>
-    [Column("isCharging")]
+    [Column("is_charging")]
     public bool? IsCharging { get; set; }
 
     /// <summary>
@@ -88,7 +97,7 @@ public class DeviceStatusEntity
     /// <summary>
     /// Radio adapter information (stored as JSON)
     /// </summary>
-    [Column("radioAdapter", TypeName = "jsonb")]
+    [Column("radio_adapter", TypeName = "jsonb")]
     public string? RadioAdapterJson { get; set; }
 
     /// <summary>
@@ -118,7 +127,7 @@ public class DeviceStatusEntity
     /// <summary>
     /// Insulin pen status information (stored as JSON)
     /// </summary>
-    [Column("insulinPen", TypeName = "jsonb")]
+    [Column("insulin_pen", TypeName = "jsonb")]
     public string? InsulinPenJson { get; set; }
 
     /// <summary>

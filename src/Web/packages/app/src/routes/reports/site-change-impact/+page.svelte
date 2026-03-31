@@ -21,7 +21,7 @@
   } from "lucide-svelte";
   import SiteChangeIcon from "$lib/components/icons/SiteChangeIcon.svelte";
   import SiteChangeImpactChart from "$lib/components/reports/SiteChangeImpactChart.svelte";
-  import { getSiteChangeImpact } from "$lib/data/reports.remote";
+  import { getSiteChangeImpact } from "$api/reports.remote";
   import { requireDateParamsContext } from "$lib/hooks/date-params.svelte";
   import { contextResource } from "$lib/hooks/resource-context.svelte";
 
@@ -118,10 +118,20 @@
           <span class="text-muted-foreground">({dayCount} days)</span>
         </div>
         {#if analysis?.siteChangeCount}
-          <div class="flex items-center gap-2 text-sm">
-            <RefreshCw class="h-4 w-4 text-muted-foreground" />
-            <span class="font-medium">{analysis.siteChangeCount}</span>
-            <span class="text-muted-foreground">site changes analyzed</span>
+          <div class="flex items-center gap-4 text-sm">
+            <div class="flex items-center gap-2">
+              <RefreshCw class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium">{analysis.siteChangeCount}</span>
+              <span class="text-muted-foreground">site changes analyzed</span>
+            </div>
+            {#if analysis.averageDaysBetweenChanges}
+              <Separator orientation="vertical" class="h-4" />
+              <div class="flex items-center gap-2">
+                <Calendar class="h-4 w-4 text-muted-foreground" />
+                <span class="font-medium">{analysis.averageDaysBetweenChanges}</span>
+                <span class="text-muted-foreground">days between changes (avg)</span>
+              </div>
+            {/if}
           </div>
         {/if}
       </CardContent>

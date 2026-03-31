@@ -4,9 +4,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Multitenancy;
+using Nocturne.Core.Contracts.Repositories;
 using Nocturne.Infrastructure.Data.Abstractions;
-using Nocturne.Infrastructure.Data.Adapters;
 using Nocturne.Infrastructure.Data.Configuration;
+using Nocturne.Infrastructure.Data.Interceptors;
 using Nocturne.Infrastructure.Data.Repositories;
 using Nocturne.Infrastructure.Data.Services;
 
@@ -50,9 +52,8 @@ public static class ServiceCollectionExtensions
         var dataSource = dataSourceBuilder.Build();
         services.AddSingleton(dataSource);
 
-        // Use the simpler AddDbContextPool overload that doesn't require service provider access
-        // This avoids "Cannot resolve scoped service from root provider" errors in .NET 9+
-        services.AddDbContextPool<NocturneDbContext>(
+        // Use AddPooledDbContextFactory for multitenant context pooling
+        services.AddPooledDbContextFactory<NocturneDbContext>(
             options =>
             {
                 options.UseNpgsql(
@@ -80,22 +81,37 @@ public static class ServiceCollectionExtensions
                 }
 
                 options.EnableServiceProviderCaching();
+                options.AddInterceptors(new TenantConnectionInterceptor());
             },
             poolSize: 128
         );
 
+        // Register scoped NocturneDbContext that sets TenantId from ITenantAccessor.
+        // All existing constructor injections of NocturneDbContext continue to work.
+        // The context is returned to the pool when the scope ends.
+        services.AddScoped(sp =>
+        {
+            var factory = sp.GetRequiredService<IDbContextFactory<NocturneDbContext>>();
+            var context = factory.CreateDbContext();
+            var tenantAccessor = sp.GetService<ITenantAccessor>();
+            if (tenantAccessor?.IsResolved == true)
+            {
+                context.TenantId = tenantAccessor.TenantId;
+            }
+            return context;
+        });
+
         // Register deduplication service (required by repositories)
         services.AddScoped<IDeduplicationService, DeduplicationService>();
 
-        // Register core repositories required by PostgreSqlService
-        services.AddScoped<EntryRepository>();
-        services.AddScoped<TreatmentRepository>();
-
-        // Register PostgreSQL service
-        services.AddScoped<IPostgreSqlService, PostgreSqlService>();
-
-        // Register PostgreSQL adapter as IDataService for drop-in replacement
-        services.AddScoped<IDataService, PostgreSqlDataService>();
+        // Register all repositories via their port interfaces
+        services.AddScoped<IEntryRepository, EntryRepository>();
+        services.AddScoped<ITreatmentRepository, TreatmentRepository>();
+        services.AddScoped<IProfileRepository, ProfileRepository>();
+        services.AddScoped<IDeviceStatusRepository, DeviceStatusRepository>();
+        services.AddScoped<IFoodRepository, FoodRepository>();
+        services.AddScoped<IActivityRepository, ActivityRepository>();
+        services.AddScoped<ISettingsRepository, SettingsRepository>();
 
         // Register Nightscout query parser
         services.AddScoped<IQueryParser, QueryParser>();
@@ -152,9 +168,8 @@ public static class ServiceCollectionExtensions
         var dataSource = dataSourceBuilder.Build();
         services.AddSingleton(dataSource);
 
-        // Use the simpler AddDbContextPool overload that doesn't require service provider access
-        // This avoids "Cannot resolve scoped service from root provider" errors in .NET 9+
-        services.AddDbContextPool<NocturneDbContext>(
+        // Use AddPooledDbContextFactory for multitenant context pooling
+        services.AddPooledDbContextFactory<NocturneDbContext>(
             options =>
             {
                 options.UseNpgsql(
@@ -182,22 +197,35 @@ public static class ServiceCollectionExtensions
                 }
 
                 options.EnableServiceProviderCaching();
+                options.AddInterceptors(new TenantConnectionInterceptor());
             },
             poolSize: 128
         );
 
+        // Register scoped NocturneDbContext that sets TenantId from ITenantAccessor.
+        services.AddScoped(sp =>
+        {
+            var factory = sp.GetRequiredService<IDbContextFactory<NocturneDbContext>>();
+            var context = factory.CreateDbContext();
+            var tenantAccessor = sp.GetService<ITenantAccessor>();
+            if (tenantAccessor?.IsResolved == true)
+            {
+                context.TenantId = tenantAccessor.TenantId;
+            }
+            return context;
+        });
+
         // Register deduplication service (required by repositories)
         services.AddScoped<IDeduplicationService, DeduplicationService>();
 
-        // Register core repositories required by PostgreSqlService
-        services.AddScoped<EntryRepository>();
-        services.AddScoped<TreatmentRepository>();
-
-        // Register PostgreSQL service
-        services.AddScoped<IPostgreSqlService, PostgreSqlService>();
-
-        // Register PostgreSQL adapter as IDataService for drop-in replacement
-        services.AddScoped<IDataService, PostgreSqlDataService>();
+        // Register all repositories via their port interfaces
+        services.AddScoped<IEntryRepository, EntryRepository>();
+        services.AddScoped<ITreatmentRepository, TreatmentRepository>();
+        services.AddScoped<IProfileRepository, ProfileRepository>();
+        services.AddScoped<IDeviceStatusRepository, DeviceStatusRepository>();
+        services.AddScoped<IFoodRepository, FoodRepository>();
+        services.AddScoped<IActivityRepository, ActivityRepository>();
+        services.AddScoped<ISettingsRepository, SettingsRepository>();
 
         // Register Nightscout query parser
         services.AddScoped<IQueryParser, QueryParser>();
@@ -270,7 +298,7 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services
     )
     {
-        services.AddScoped<DiscrepancyAnalysisRepository>();
+        services.AddScoped<IDiscrepancyAnalysisRepository, DiscrepancyAnalysisRepository>();
         return services;
     }
 
@@ -281,14 +309,12 @@ public static class ServiceCollectionExtensions
     /// <returns>Service collection for chaining</returns>
     public static IServiceCollection AddAlertRepositories(this IServiceCollection services)
     {
-        services.AddScoped<AlertRuleRepository>();
-        services.AddScoped<AlertHistoryRepository>();
-        services.AddScoped<NotificationPreferencesRepository>();
-        services.AddScoped<TrackerRepository>();
-        services.AddScoped<StateSpanRepository>();
-        services.AddScoped<SystemEventRepository>();
-        services.AddScoped<TreatmentFoodRepository>();
-        services.AddScoped<UserFoodFavoriteRepository>();
+        services.AddScoped<IAlertTrackerRepository, AlertTrackerRepository>();
+        services.AddScoped<ITrackerRepository, TrackerRepository>();
+        services.AddScoped<IStateSpanRepository, StateSpanRepository>();
+        services.AddScoped<ISystemEventRepository, SystemEventRepository>();
+        services.AddScoped<ITreatmentFoodRepository, TreatmentFoodRepository>();
+        services.AddScoped<IUserFoodFavoriteRepository, UserFoodFavoriteRepository>();
         services.AddScoped<EntryRepository>();
         services.AddScoped<TreatmentRepository>();
         return services;

@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using Nocturne.API.Attributes;
+using OpenApi.Remote.Attributes;
 using Nocturne.API.Services;
 
 namespace Nocturne.API.Controllers.V4;
@@ -13,6 +13,7 @@ namespace Nocturne.API.Controllers.V4;
 [Route("api/v4/predictions")]
 [Produces("application/json")]
 [ClientPropertyName("predictions")]
+[Tags("V4 Predictions")]
 public class PredictionController : ControllerBase
 {
     private readonly IPredictionService? _predictionService;
@@ -37,6 +38,7 @@ public class PredictionController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Glucose predictions including IOB, UAM, COB, and zero-temp curves</returns>
     [HttpGet]
+    [RemoteQuery]
     [ProducesResponseType(typeof(GlucosePredictionResponse), 200)]
     [ProducesResponseType(typeof(PredictionErrorResponse), 400)]
     [ProducesResponseType(typeof(PredictionErrorResponse), 404)]
@@ -47,10 +49,7 @@ public class PredictionController : ControllerBase
     {
         if (_predictionService == null || _source == PredictionSource.None)
         {
-            return NotFound(new PredictionErrorResponse
-            {
-                Error = "Predictions are not configured. Set Predictions:Source to DeviceStatus or OrefWasm."
-            });
+            return Problem(detail: "Predictions are not configured. Set Predictions:Source to DeviceStatus or OrefWasm.", statusCode: 404, title: "Not Found");
         }
 
         _logger.LogDebug("Getting glucose predictions (source: {Source}) for profile: {ProfileId}",
@@ -64,12 +63,12 @@ public class PredictionController : ControllerBase
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning(ex, "Invalid operation for predictions");
-            return BadRequest(new PredictionErrorResponse { Error = ex.Message });
+            return Problem(detail: ex.Message, statusCode: 400, title: "Bad Request");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting predictions");
-            return StatusCode(500, new PredictionErrorResponse { Error = "Failed to calculate predictions" });
+            return Problem(detail: "Failed to calculate predictions", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -78,6 +77,7 @@ public class PredictionController : ControllerBase
     /// </summary>
     /// <returns>Status of the prediction service including configured source</returns>
     [HttpGet("status")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(PredictionStatusResponse), 200)]
     public ActionResult<PredictionStatusResponse> GetStatus()
     {

@@ -3,7 +3,7 @@
   import * as Card from "$lib/components/ui/card";
   import Button from "$lib/components/ui/button/button.svelte";
   import { ChevronLeft, ChevronRight, Calendar } from "lucide-svelte";
-  import { getReportsData } from "$lib/data/reports.remote";
+  import { getReportsData } from "$api/reports.remote";
   import { requireDateParamsContext } from "$lib/hooks/date-params.svelte";
   import { contextResource } from "$lib/hooks/resource-context.svelte";
   import { bg } from "$lib/utils/formatting";
@@ -20,8 +20,8 @@
   ] as const;
 
   // Get shared date params from context (set by reports layout)
-  // Default: 14 days is ideal for week-to-week comparison (2 full weeks)
-  const reportsParams = requireDateParamsContext(14);
+  // Default: 7 days (today + last 6 days = 1 full week)
+  const reportsParams = requireDateParamsContext(7);
 
   // Create resource with automatic layout registration
   const reportsResource = contextResource(
@@ -50,7 +50,7 @@
     const timeMap = new Map<number, Record<string, number | Date>>();
 
     for (const entry of entries) {
-      const mills = entry.mills ?? new Date(entry.dateString ?? "").getTime();
+      const mills = entry.mills ?? 0;
 
       const entryDate = new Date(mills);
       const dayOfWeek = entryDate.getDay();
@@ -62,17 +62,18 @@
       const bucket = Math.round(minutesInDay / 5) * 5;
 
       if (!timeMap.has(bucket)) {
-        // Create a date for x-axis (Jan 1, 2000 + time)
-        const time = new Date(2000, 0, 1, Math.floor(bucket / 60), bucket % 60);
+        // Create a date for x-axis (today's date + time-of-day)
+        const now = new Date();
+        const time = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor(bucket / 60), bucket % 60);
         timeMap.set(bucket, { time });
       }
 
       const row = timeMap.get(bucket)!;
       // Average values if we already have data for this day/time slot
       if (row[dayKey] !== undefined) {
-        row[dayKey] = ((row[dayKey] as number) + bg(entry.sgv ?? 0)) / 2;
+        row[dayKey] = ((row[dayKey] as number) + bg(entry.mgdl ?? 0)) / 2;
       } else {
-        row[dayKey] = bg(entry.sgv ?? 0);
+        row[dayKey] = bg(entry.mgdl ?? 0);
       }
     }
 

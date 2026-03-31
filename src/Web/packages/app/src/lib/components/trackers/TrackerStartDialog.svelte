@@ -7,6 +7,7 @@
   import { Play } from "lucide-svelte";
   import { cn } from "$lib/utils";
 
+  import { tick } from "svelte";
   import {
     type TrackerDefinitionDto,
     type TrackerInstanceDto,
@@ -14,8 +15,8 @@
     TrackerMode,
     CompletionReason,
   } from "$api";
-  import * as trackersRemote from "$lib/data/generated/trackers.generated.remote";
-  import * as treatmentsRemote from "$lib/data/treatments.remote";
+  import * as trackersRemote from "$api/generated/trackers.generated.remote";
+  import { create as createDeviceEventForm } from "$api/generated/deviceEvents.generated.remote";
 
   interface TrackerStartDialogProps {
     open: boolean;
@@ -37,6 +38,12 @@
   let startedAtString = $state("");
   let scheduledAtString = $state("");
   let isSubmitting = $state(false);
+
+  // Hidden form for device event creation
+  let deviceEventFormRef = $state<HTMLFormElement | null>(null);
+  let deviceEventMills = $state(0);
+  let deviceEventEventType = $state<string>("");
+  let deviceEventNotes = $state<string>("");
 
   // Derived mode check
   const isEventMode = $derived(definition?.mode === TrackerMode.Event);
@@ -190,14 +197,13 @@
         scheduledAt: isEventMode ? (scheduledAt ? scheduledAt.toISOString() : undefined) : undefined,
       });
 
-      // Create treatment event if configured on the definition
-      if (definition.startEventType) {
-        await treatmentsRemote.createTreatment({
-          eventType: definition.startEventType,
-          created_at: (startedAt ?? new Date()).toISOString(),
-          notes: startNotes || undefined,
-          enteredBy: "Nocturne Tracker",
-        });
+      // Create device event if configured on the definition
+      if (definition.startEventType && deviceEventFormRef) {
+        deviceEventMills = (startedAt ?? new Date()).getTime();
+        deviceEventEventType = definition.startEventType;
+        deviceEventNotes = startNotes || "";
+        await tick();
+        deviceEventFormRef.requestSubmit();
       }
 
       open = false;
@@ -214,6 +220,22 @@
     onClose();
   }
 </script>
+
+<!-- Hidden device event form -->
+<form
+  bind:this={deviceEventFormRef}
+  class="hidden"
+  {...createDeviceEventForm.enhance(async ({ submit }) => {
+    await submit();
+  })}
+>
+  <input type="hidden" name="n:mills" value={deviceEventMills} />
+  <input type="hidden" name="eventType" value={deviceEventEventType} />
+  {#if deviceEventNotes}
+    <input type="hidden" name="notes" value={deviceEventNotes} />
+  {/if}
+  <input type="hidden" name="app" value="Nocturne Tracker" />
+</form>
 
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-[425px]">

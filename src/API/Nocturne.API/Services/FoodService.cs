@@ -2,8 +2,9 @@ using System.Globalization;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Events;
 using Nocturne.Core.Models;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
 
 namespace Nocturne.API.Services;
 
@@ -12,26 +13,32 @@ namespace Nocturne.API.Services;
 /// </summary>
 public class FoodService : IFoodService
 {
-    private readonly IPostgreSqlService _postgreSqlService;
+    private readonly IFoodRepository _food;
     private readonly IDocumentProcessingService _documentProcessingService;
-    private readonly ISignalRBroadcastService _signalRBroadcastService;
+    private readonly IWriteSideEffects _sideEffects;
+    private readonly IDataEventSink<Food> _events;
     private readonly ILogger<FoodService> _logger;
+    private const string CollectionName = "food";
 
     public FoodService(
-        IPostgreSqlService postgreSqlService,
+        IFoodRepository food,
         IDocumentProcessingService documentProcessingService,
-        ISignalRBroadcastService signalRBroadcastService,
+        IWriteSideEffects sideEffects,
+        IDataEventSink<Food> events,
         ILogger<FoodService> logger
     )
     {
-        _postgreSqlService =
-            postgreSqlService ?? throw new ArgumentNullException(nameof(postgreSqlService));
+        _food =
+            food ?? throw new ArgumentNullException(nameof(food));
         _documentProcessingService =
             documentProcessingService
             ?? throw new ArgumentNullException(nameof(documentProcessingService));
-        _signalRBroadcastService =
-            signalRBroadcastService
-            ?? throw new ArgumentNullException(nameof(signalRBroadcastService));
+        _sideEffects =
+            sideEffects
+            ?? throw new ArgumentNullException(nameof(sideEffects));
+        _events =
+            events
+            ?? throw new ArgumentNullException(nameof(events));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -52,7 +59,7 @@ public class FoodService : IFoodService
                 skip
             );
             // Note: MongoDB service doesn't support find/count/skip parameters for food yet
-            return await _postgreSqlService.GetFoodAsync(cancellationToken);
+            return await _food.GetFoodAsync(cancellationToken);
         }
         catch (Exception ex)
         {
@@ -70,7 +77,7 @@ public class FoodService : IFoodService
         try
         {
             _logger.LogDebug("Getting food record by ID: {Id}", id);
-            return await _postgreSqlService.GetFoodByIdAsync(id, cancellationToken);
+            return await _food.GetFoodByIdAsync(id, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -94,22 +101,14 @@ public class FoodService : IFoodService
             var processedList = processedFoods.ToList();
 
             // Create in database
-            var createdFoods = await _postgreSqlService.CreateFoodAsync(
+            var createdFoods = await _food.CreateFoodAsync(
                 processedList,
                 cancellationToken
             );
             var resultList = createdFoods.ToList();
 
-            // Broadcast WebSocket event for storage create
-            await _signalRBroadcastService.BroadcastStorageCreateAsync(
-                "food",
-                new
-                {
-                    collection = "food",
-                    data = resultList,
-                    count = resultList.Count,
-                }
-            );
+            await _sideEffects.OnCreatedAsync(CollectionName, resultList, cancellationToken: cancellationToken);
+            await _events.OnCreatedAsync(resultList, cancellationToken);
 
             _logger.LogDebug("Successfully created {Count} food records", resultList.Count);
             return resultList;
@@ -258,21 +257,12 @@ public class FoodService : IFoodService
         {
             _logger.LogDebug("Updating food record with ID: {Id}", id);
 
-            var updatedFood = await _postgreSqlService.UpdateFoodAsync(id, food, cancellationToken);
+            var updatedFood = await _food.UpdateFoodAsync(id, food, cancellationToken);
 
             if (updatedFood != null)
             {
-                // Broadcast WebSocket event for storage update
-                await _signalRBroadcastService.BroadcastStorageUpdateAsync(
-                    "food",
-                    new
-                    {
-                        collection = "food",
-                        data = updatedFood,
-                        id = id,
-                    }
-                );
-
+                await _sideEffects.OnUpdatedAsync(CollectionName, updatedFood, cancellationToken: cancellationToken);
+                await _events.OnUpdatedAsync(updatedFood, cancellationToken);
                 _logger.LogDebug("Successfully updated food record with ID: {Id}", id);
             }
 
@@ -295,16 +285,12 @@ public class FoodService : IFoodService
         {
             _logger.LogDebug("Deleting food record with ID: {Id}", id);
 
-            var deleted = await _postgreSqlService.DeleteFoodAsync(id, cancellationToken);
+            var deleted = await _food.DeleteFoodAsync(id, cancellationToken);
 
             if (deleted)
             {
-                // Broadcast WebSocket event for storage delete
-                await _signalRBroadcastService.BroadcastStorageDeleteAsync(
-                    "food",
-                    new { collection = "food", id = id }
-                );
-
+                await _sideEffects.OnDeletedAsync<Food>(CollectionName, null, cancellationToken: cancellationToken);
+                await _events.OnDeletedAsync(null, cancellationToken);
                 _logger.LogDebug("Successfully deleted food record with ID: {Id}", id);
             }
 
@@ -327,24 +313,15 @@ public class FoodService : IFoodService
         {
             _logger.LogDebug("Bulk deleting food records with filter: {Find}", find);
 
-            var deletedCount = await _postgreSqlService.BulkDeleteFoodAsync(
+            var deletedCount = await _food.BulkDeleteFoodAsync(
                 find ?? "{}",
                 cancellationToken
             );
 
             if (deletedCount > 0)
             {
-                // Broadcast WebSocket event for bulk storage delete
-                await _signalRBroadcastService.BroadcastStorageDeleteAsync(
-                    "food",
-                    new
-                    {
-                        collection = "food",
-                        filter = find,
-                        deletedCount = deletedCount,
-                    }
-                );
-
+                await _sideEffects.OnBulkDeletedAsync(CollectionName, deletedCount, cancellationToken: cancellationToken);
+                await _events.OnBulkDeletedAsync(deletedCount, cancellationToken);
                 _logger.LogDebug("Successfully bulk deleted {Count} food records", deletedCount);
             }
 

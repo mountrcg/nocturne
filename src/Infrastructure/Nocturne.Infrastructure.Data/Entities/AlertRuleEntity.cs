@@ -4,135 +4,110 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Nocturne.Infrastructure.Data.Entities;
 
 /// <summary>
-/// PostgreSQL entity for AlertRule (notification rules)
-/// Maps to notification alert rule configuration
+/// A composable alert rule with condition tree, hysteresis, and confirmation settings.
+/// Each rule owns schedules, which own escalation chains.
 /// </summary>
 [Table("alert_rules")]
-public class AlertRuleEntity
+public class AlertRuleEntity : ITenantScoped
 {
     /// <summary>
-    /// Primary key - UUID for alert rule
+    /// Unique identifier for the alert rule
     /// </summary>
     [Key]
     public Guid Id { get; set; }
 
     /// <summary>
-    /// User identifier this rule belongs to
+    /// Identifier of the tenant this alert rule belongs to
     /// </summary>
-    [Column("user_id")]
-    [MaxLength(255)]
-    public string UserId { get; set; } = string.Empty;
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
 
     /// <summary>
-    /// Human-readable name for the alert rule
+    /// Display name of the alert rule
     /// </summary>
     [Column("name")]
-    [MaxLength(255)]
+    [MaxLength(128)]
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
-    /// Whether this alert rule is currently enabled
+    /// Detailed description of the alert rule
+    /// </summary>
+    [Column("description")]
+    [MaxLength(512)]
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// Condition type: "threshold" | "rate_of_change" | "signal_loss" | "composite"
+    /// </summary>
+    [Column("condition_type")]
+    [MaxLength(32)]
+    public string ConditionType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// JSONB condition parameters (thresholds, rates, durations, composite children, etc.)
+    /// </summary>
+    [Column("condition_params", TypeName = "jsonb")]
+    public string ConditionParams { get; set; } = "{}";
+
+    /// <summary>
+    /// Minutes the condition must remain cleared before transitioning back to idle.
+    /// </summary>
+    [Column("hysteresis_minutes")]
+    public int HysteresisMinutes { get; set; }
+
+    /// <summary>
+    /// Number of consecutive readings that must satisfy the condition before firing.
+    /// </summary>
+    [Column("confirmation_readings")]
+    public int ConfirmationReadings { get; set; } = 1;
+
+    /// <summary>
+    /// Alert severity. "normal" or "critical". Critical alerts bypass quiet hours.
+    /// </summary>
+    [Column("severity")]
+    [MaxLength(16)]
+    public string Severity { get; set; } = "normal";
+
+    /// <summary>
+    /// Client-side presentation config (audio, visual, snooze). Stored as JSONB.
+    /// The server stores this but does not make decisions based on it.
+    /// </summary>
+    [Column("client_configuration", TypeName = "jsonb")]
+    public string ClientConfiguration { get; set; } = "{}";
+
+    /// <summary>
+    /// Whether the alert rule is currently active
     /// </summary>
     [Column("is_enabled")]
     public bool IsEnabled { get; set; } = true;
 
     /// <summary>
-    /// Low glucose threshold in mg/dL
+    /// Order in which the rule should be processed or displayed
     /// </summary>
-    [Column("low_threshold")]
-    public decimal? LowThreshold { get; set; }
+    [Column("sort_order")]
+    public int SortOrder { get; set; }
 
     /// <summary>
-    /// High glucose threshold in mg/dL
-    /// </summary>
-    [Column("high_threshold")]
-    public decimal? HighThreshold { get; set; }
-
-    /// <summary>
-    /// Urgent low glucose threshold in mg/dL
-    /// </summary>
-    [Column("urgent_low_threshold")]
-    public decimal? UrgentLowThreshold { get; set; }
-
-    /// <summary>
-    /// Urgent high glucose threshold in mg/dL
-    /// </summary>
-    [Column("urgent_high_threshold")]
-    public decimal? UrgentHighThreshold { get; set; }
-
-    /// <summary>
-    /// Active hours configuration (stored as JSON)
-    /// </summary>
-    [Column("active_hours", TypeName = "jsonb")]
-    public string? ActiveHours { get; set; }
-
-    /// <summary>
-    /// Days of week when rule is active (JSON array)
-    /// </summary>
-    [Column("days_of_week", TypeName = "jsonb")]
-    public string? DaysOfWeek { get; set; }
-
-    /// <summary>
-    /// Notification channels configuration (stored as JSON)
-    /// </summary>
-    [Column("notification_channels", TypeName = "jsonb")]
-    public string NotificationChannels { get; set; } = "[]";
-
-    /// <summary>
-    /// Delay in minutes before escalating alert
-    /// </summary>
-    [Column("escalation_delay_minutes")]
-    public int EscalationDelayMinutes { get; set; } = 15;
-
-    /// <summary>
-    /// Maximum number of escalations before stopping
-    /// </summary>
-    [Column("max_escalations")]
-    public int MaxEscalations { get; set; } = 3;
-
-    /// <summary>
-    /// Default snooze duration in minutes
-    /// </summary>
-    [Column("default_snooze_minutes")]
-    public int DefaultSnoozeMinutes { get; set; } = 30;
-
-    /// <summary>
-    /// Maximum allowed snooze duration in minutes
-    /// </summary>
-    [Column("max_snooze_minutes")]
-    public int MaxSnoozeMinutes { get; set; } = 120;
-
-    /// <summary>
-    /// Cooldown period in minutes after an alert is resolved before it can trigger again.
-    /// </summary>
-    [Column("cooldown_minutes")]
-    public int CooldownMinutes { get; set; } = 15;
-
-    /// <summary>
-    /// Lead time in minutes for forecast alerts.
-    /// </summary>
-    [Column("forecast_lead_time_minutes")]
-    public int? ForecastLeadTimeMinutes { get; set; }
-
-    /// <summary> Full JSON configuration from the client (audio, visual, etc) </summary>
-    [Column("client_configuration", TypeName = "jsonb")]
-    public string? ClientConfiguration { get; set; }
-
-    /// <summary>
-    /// When this alert rule was created
+    /// When the alert rule was created
     /// </summary>
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>
-    /// When this alert rule was last updated
+    /// When the alert rule was last updated
     /// </summary>
     [Column("updated_at")]
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    // Navigation
+
     /// <summary>
-    /// Navigation property for alert history
+    /// Collection of schedules associated with this alert rule
     /// </summary>
-    public virtual ICollection<AlertHistoryEntity> AlertHistory { get; set; } =
-        new List<AlertHistoryEntity>();
+    public ICollection<AlertScheduleEntity> Schedules { get; set; } = [];
+
+    /// <summary>
+    /// Current state tracker for this alert rule
+    /// </summary>
+    public AlertTrackerStateEntity? TrackerState { get; set; }
 }

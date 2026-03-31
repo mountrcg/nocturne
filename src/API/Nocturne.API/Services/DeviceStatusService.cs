@@ -1,7 +1,9 @@
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Events;
+using Nocturne.Core.Contracts.Multitenancy;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Cache.Abstractions;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
 
 namespace Nocturne.API.Services;
 
@@ -10,22 +12,31 @@ namespace Nocturne.API.Services;
 /// </summary>
 public class DeviceStatusService : IDeviceStatusService
 {
-    private readonly IPostgreSqlService _postgreSqlService;
-    private readonly ISignalRBroadcastService _broadcastService;
+    private readonly IDeviceStatusRepository _deviceStatuses;
+    private readonly IWriteSideEffects _sideEffects;
+    private readonly IDataEventSink<DeviceStatus> _events;
     private readonly ICacheService _cacheService;
+    private readonly ITenantAccessor _tenantAccessor;
     private readonly ILogger<DeviceStatusService> _logger;
     private const string CollectionName = "devicestatus";
 
+    private string TenantCacheId => _tenantAccessor.Context?.TenantId.ToString()
+        ?? throw new InvalidOperationException("Tenant context is not resolved");
+
     public DeviceStatusService(
-        IPostgreSqlService postgreSqlService,
-        ISignalRBroadcastService broadcastService,
+        IDeviceStatusRepository deviceStatuses,
+        IWriteSideEffects sideEffects,
+        IDataEventSink<DeviceStatus> events,
         ICacheService cacheService,
+        ITenantAccessor tenantAccessor,
         ILogger<DeviceStatusService> logger
     )
     {
-        _postgreSqlService = postgreSqlService;
-        _broadcastService = broadcastService;
+        _deviceStatuses = deviceStatuses;
+        _sideEffects = sideEffects;
+        _events = events;
         _cacheService = cacheService;
+        _tenantAccessor = tenantAccessor;
         _logger = logger;
     }
 
@@ -40,7 +51,7 @@ public class DeviceStatusService : IDeviceStatusService
         // Cache device status only for the common case of recent entries with default pagination
         if (string.IsNullOrEmpty(find) && (count ?? 10) == 10 && (skip ?? 0) == 0)
         {
-            const string cacheKey = "devicestatus:current";
+            var cacheKey = $"devicestatus:current:{TenantCacheId}";
             var cacheTtl = TimeSpan.FromSeconds(60);
 
             var cachedDeviceStatus = await _cacheService.GetAsync<IEnumerable<DeviceStatus>>(
@@ -54,7 +65,7 @@ public class DeviceStatusService : IDeviceStatusService
             }
 
             _logger.LogDebug("Cache MISS for current device status, fetching from database");
-            var deviceStatus = await _postgreSqlService.GetDeviceStatusAsync(
+            var deviceStatus = await _deviceStatuses.GetDeviceStatusAsync(
                 10,
                 0,
                 cancellationToken
@@ -79,7 +90,7 @@ public class DeviceStatusService : IDeviceStatusService
             count,
             skip
         );
-        return await _postgreSqlService.GetDeviceStatusWithAdvancedFilterAsync(
+        return await _deviceStatuses.GetDeviceStatusWithAdvancedFilterAsync(
             count: count ?? 10,
             skip: skip ?? 0,
             findQuery: find,
@@ -93,7 +104,7 @@ public class DeviceStatusService : IDeviceStatusService
         CancellationToken cancellationToken = default
     )
     {
-        return await _postgreSqlService.GetDeviceStatusByIdAsync(id, cancellationToken);
+        return await _deviceStatuses.GetDeviceStatusByIdAsync(id, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -102,45 +113,18 @@ public class DeviceStatusService : IDeviceStatusService
         CancellationToken cancellationToken = default
     )
     {
-        var createdDeviceStatus = await _postgreSqlService.CreateDeviceStatusAsync(
+        var createdDeviceStatus = await _deviceStatuses.CreateDeviceStatusAsync(
             deviceStatusEntries,
             cancellationToken
         );
 
-        // Invalidate current device status cache since new entries were created
-        try
-        {
-            await _cacheService.RemoveAsync("devicestatus:current", cancellationToken);
-            _logger.LogDebug("Invalidated current device status cache after creating new entries");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to invalidate current device status cache");
-        }
+        await _sideEffects.OnCreatedAsync(
+            CollectionName,
+            createdDeviceStatus.ToList(),
+            cancellationToken: cancellationToken
+        );
 
-        // Broadcast create events for each device status entry (replaces legacy ctx.bus.emit('storage-socket-create'))
-        foreach (var deviceStatus in createdDeviceStatus)
-        {
-            try
-            {
-                await _broadcastService.BroadcastStorageCreateAsync(
-                    CollectionName,
-                    new { colName = CollectionName, doc = deviceStatus }
-                );
-                _logger.LogDebug(
-                    "Broadcasted storage create event for device status {DeviceStatusId}",
-                    deviceStatus.Id
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    ex,
-                    "Failed to broadcast storage create event for device status {DeviceStatusId}",
-                    deviceStatus.Id
-                );
-            }
-        }
+        await _events.OnCreatedAsync(createdDeviceStatus.ToList(), cancellationToken);
 
         return createdDeviceStatus;
     }
@@ -152,7 +136,7 @@ public class DeviceStatusService : IDeviceStatusService
         CancellationToken cancellationToken = default
     )
     {
-        var updatedDeviceStatus = await _postgreSqlService.UpdateDeviceStatusAsync(
+        var updatedDeviceStatus = await _deviceStatuses.UpdateDeviceStatusAsync(
             id,
             deviceStatus,
             cancellationToken
@@ -160,39 +144,13 @@ public class DeviceStatusService : IDeviceStatusService
 
         if (updatedDeviceStatus != null)
         {
-            // Invalidate current device status cache since an entry was updated
-            try
-            {
-                await _cacheService.RemoveAsync("devicestatus:current", cancellationToken);
-                _logger.LogDebug(
-                    "Invalidated current device status cache after updating device status {DeviceStatusId}",
-                    id
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to invalidate current device status cache");
-            }
+            await _sideEffects.OnUpdatedAsync(
+                CollectionName,
+                updatedDeviceStatus,
+                cancellationToken: cancellationToken
+            );
 
-            try
-            {
-                await _broadcastService.BroadcastStorageUpdateAsync(
-                    CollectionName,
-                    new { colName = CollectionName, doc = updatedDeviceStatus }
-                );
-                _logger.LogDebug(
-                    "Broadcasted storage update event for device status {DeviceStatusId}",
-                    updatedDeviceStatus.Id
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    ex,
-                    "Failed to broadcast storage update event for device status {DeviceStatusId}",
-                    updatedDeviceStatus.Id
-                );
-            }
+            await _events.OnUpdatedAsync(updatedDeviceStatus, cancellationToken);
         }
 
         return updatedDeviceStatus;
@@ -204,52 +162,30 @@ public class DeviceStatusService : IDeviceStatusService
         CancellationToken cancellationToken = default
     )
     {
+        await _sideEffects.BeforeDeleteAsync<DeviceStatus>(
+            id,
+            new WriteEffectOptions { DecomposeToV4 = true },
+            cancellationToken
+        );
+        await _events.BeforeDeleteAsync(id, cancellationToken);
+
         // Get the device status before deleting for broadcasting
-        var deviceStatusToDelete = await _postgreSqlService.GetDeviceStatusByIdAsync(
+        var deviceStatusToDelete = await _deviceStatuses.GetDeviceStatusByIdAsync(
             id,
             cancellationToken
         );
 
-        var deleted = await _postgreSqlService.DeleteDeviceStatusAsync(id, cancellationToken);
+        var deleted = await _deviceStatuses.DeleteDeviceStatusAsync(id, cancellationToken);
 
         if (deleted)
         {
-            // Invalidate current device status cache since an entry was deleted
-            try
-            {
-                await _cacheService.RemoveAsync("devicestatus:current", cancellationToken);
-                _logger.LogDebug(
-                    "Invalidated current device status cache after deleting device status {DeviceStatusId}",
-                    id
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to invalidate current device status cache");
-            }
+            await _sideEffects.OnDeletedAsync(
+                CollectionName,
+                deviceStatusToDelete,
+                cancellationToken: cancellationToken
+            );
 
-            if (deviceStatusToDelete != null)
-            {
-                try
-                {
-                    await _broadcastService.BroadcastStorageDeleteAsync(
-                        CollectionName,
-                        new { colName = CollectionName, doc = deviceStatusToDelete }
-                    );
-                    _logger.LogDebug(
-                        "Broadcasted storage delete event for device status {DeviceStatusId}",
-                        deviceStatusToDelete.Id
-                    );
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(
-                        ex,
-                        "Failed to broadcast storage delete event for device status {DeviceStatusId}",
-                        deviceStatusToDelete.Id
-                    );
-                }
-            }
+            await _events.OnDeletedAsync(deviceStatusToDelete, cancellationToken);
         }
 
         return deleted;
@@ -261,47 +197,18 @@ public class DeviceStatusService : IDeviceStatusService
         CancellationToken cancellationToken = default
     )
     {
-        var deletedCount = await _postgreSqlService.BulkDeleteDeviceStatusAsync(
+        var deletedCount = await _deviceStatuses.BulkDeleteDeviceStatusAsync(
             find ?? "{}",
             cancellationToken
         );
 
-        if (deletedCount > 0)
-        {
-            // Invalidate current device status cache since entries were deleted
-            try
-            {
-                await _cacheService.RemoveAsync("devicestatus:current", cancellationToken);
-                _logger.LogDebug(
-                    "Invalidated current device status cache after bulk deleting {Count} entries",
-                    deletedCount
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to invalidate current device status cache");
-            }
+        await _sideEffects.OnBulkDeletedAsync(
+            CollectionName,
+            deletedCount,
+            cancellationToken: cancellationToken
+        );
 
-            // Broadcast bulk delete event (replaces legacy ctx.bus.emit('storage-socket-delete'))
-            try
-            {
-                await _broadcastService.BroadcastStorageDeleteAsync(
-                    CollectionName,
-                    new { colName = CollectionName, deletedCount = deletedCount }
-                );
-                _logger.LogDebug(
-                    "Broadcasted storage delete event for {Count} device status entries",
-                    deletedCount
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    ex,
-                    "Failed to broadcast storage delete event for bulk device status deletion"
-                );
-            }
-        }
+        await _events.OnBulkDeletedAsync(deletedCount, cancellationToken);
 
         return deletedCount;
     }
@@ -312,6 +219,6 @@ public class DeviceStatusService : IDeviceStatusService
         CancellationToken cancellationToken = default
     )
     {
-        return await _postgreSqlService.GetDeviceStatusAsync(count, 0, cancellationToken);
+        return await _deviceStatuses.GetDeviceStatusAsync(count, 0, cancellationToken);
     }
 }

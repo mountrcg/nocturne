@@ -2,9 +2,11 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using Nocturne.API.Services;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Contracts.Events;
 using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Cache.Abstractions;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
+using Nocturne.Tests.Shared.Mocks;
 using Xunit;
 
 namespace Nocturne.API.Tests.Services;
@@ -15,23 +17,25 @@ namespace Nocturne.API.Tests.Services;
 [Parity("api.devicestatus.test.js")]
 public class DeviceStatusServiceTests
 {
-    private readonly Mock<IPostgreSqlService> _mockPostgreSqlService;
-    private readonly Mock<ISignalRBroadcastService> _mockSignalRBroadcastService;
+    private readonly Mock<IDeviceStatusRepository> _mockDeviceStatusRepository;
+    private readonly Mock<IWriteSideEffects> _mockSideEffects;
     private readonly Mock<ICacheService> _mockCacheService;
     private readonly Mock<ILogger<DeviceStatusService>> _mockLogger;
     private readonly DeviceStatusService _deviceStatusService;
 
     public DeviceStatusServiceTests()
     {
-        _mockPostgreSqlService = new Mock<IPostgreSqlService>();
-        _mockSignalRBroadcastService = new Mock<ISignalRBroadcastService>();
+        _mockDeviceStatusRepository = new Mock<IDeviceStatusRepository>();
+        _mockSideEffects = new Mock<IWriteSideEffects>();
         _mockCacheService = new Mock<ICacheService>();
         _mockLogger = new Mock<ILogger<DeviceStatusService>>();
 
         _deviceStatusService = new DeviceStatusService(
-            _mockPostgreSqlService.Object,
-            _mockSignalRBroadcastService.Object,
+            _mockDeviceStatusRepository.Object,
+            _mockSideEffects.Object,
+            Mock.Of<IDataEventSink<DeviceStatus>>(),
             _mockCacheService.Object,
+            MockTenantAccessor.Create().Object,
             _mockLogger.Object
         );
     }
@@ -61,13 +65,13 @@ public class DeviceStatusServiceTests
         _mockCacheService
             .Setup(x =>
                 x.GetAsync<IEnumerable<DeviceStatus>>(
-                    "devicestatus:current",
+                    "devicestatus:current:00000000-0000-0000-0000-000000000001",
                     It.IsAny<CancellationToken>()
                 )
             )
             .ReturnsAsync((IEnumerable<DeviceStatus>?)null);
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x => x.GetDeviceStatusAsync(10, 0, It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedDeviceStatus);
 
@@ -102,7 +106,7 @@ public class DeviceStatusServiceTests
         };
 
         // When find is provided, GetDeviceStatusWithAdvancedFilterAsync is called
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x => x.GetDeviceStatusWithAdvancedFilterAsync(
                 count, skip, find, false, It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedDeviceStatus);
@@ -135,7 +139,7 @@ public class DeviceStatusServiceTests
             Mills = 1234567890,
         };
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x => x.GetDeviceStatusByIdAsync(deviceStatusId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedDeviceStatus);
 
@@ -158,7 +162,7 @@ public class DeviceStatusServiceTests
         // Arrange
         var deviceStatusId = "invalidid";
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x => x.GetDeviceStatusByIdAsync(deviceStatusId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((DeviceStatus?)null);
 
@@ -193,7 +197,7 @@ public class DeviceStatusServiceTests
             })
             .ToList();
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x =>
                 x.CreateDeviceStatusAsync(deviceStatusEntries, It.IsAny<CancellationToken>())
             )
@@ -208,13 +212,18 @@ public class DeviceStatusServiceTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal(2, result.Count());
-        _mockPostgreSqlService.Verify(
+        _mockDeviceStatusRepository.Verify(
             x => x.CreateDeviceStatusAsync(deviceStatusEntries, It.IsAny<CancellationToken>()),
             Times.Once
         );
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageCreateAsync("devicestatus", It.IsAny<object>()),
-            Times.Exactly(2)
+        _mockSideEffects.Verify(
+            x => x.OnCreatedAsync(
+                "devicestatus",
+                It.IsAny<IReadOnlyList<DeviceStatus>>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
+            Times.Once
         );
     }
 
@@ -238,7 +247,7 @@ public class DeviceStatusServiceTests
             Mills = 1234567900,
         };
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x =>
                 x.UpdateDeviceStatusAsync(
                     deviceStatusId,
@@ -259,7 +268,7 @@ public class DeviceStatusServiceTests
         Assert.NotNull(result);
         Assert.Equal(deviceStatusId, result.Id);
         Assert.Equal(1234567900, result.Mills);
-        _mockPostgreSqlService.Verify(
+        _mockDeviceStatusRepository.Verify(
             x =>
                 x.UpdateDeviceStatusAsync(
                     deviceStatusId,
@@ -268,8 +277,13 @@ public class DeviceStatusServiceTests
                 ),
             Times.Once
         );
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageUpdateAsync("devicestatus", It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnUpdatedAsync(
+                "devicestatus",
+                It.IsAny<DeviceStatus>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Once
         );
     }
@@ -283,7 +297,7 @@ public class DeviceStatusServiceTests
         var deviceStatusId = "invalidid";
         var deviceStatus = new DeviceStatus { Device = "dexcom", Mills = 1234567890 };
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x =>
                 x.UpdateDeviceStatusAsync(
                     deviceStatusId,
@@ -302,8 +316,13 @@ public class DeviceStatusServiceTests
 
         // Assert
         Assert.Null(result);
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageUpdateAsync(It.IsAny<string>(), It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnUpdatedAsync(
+                It.IsAny<string>(),
+                It.IsAny<DeviceStatus>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Never
         );
     }
@@ -322,11 +341,11 @@ public class DeviceStatusServiceTests
             Mills = 1234567890,
         };
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x => x.GetDeviceStatusByIdAsync(deviceStatusId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(deviceStatusToDelete);
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x => x.DeleteDeviceStatusAsync(deviceStatusId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
@@ -338,12 +357,17 @@ public class DeviceStatusServiceTests
 
         // Assert
         Assert.True(result);
-        _mockPostgreSqlService.Verify(
+        _mockDeviceStatusRepository.Verify(
             x => x.DeleteDeviceStatusAsync(deviceStatusId, It.IsAny<CancellationToken>()),
             Times.Once
         );
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageDeleteAsync("devicestatus", It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnDeletedAsync(
+                "devicestatus",
+                It.IsAny<DeviceStatus?>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Once
         );
     }
@@ -356,7 +380,7 @@ public class DeviceStatusServiceTests
         // Arrange
         var deviceStatusId = "invalidid";
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x => x.DeleteDeviceStatusAsync(deviceStatusId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
@@ -368,8 +392,13 @@ public class DeviceStatusServiceTests
 
         // Assert
         Assert.False(result);
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageDeleteAsync(It.IsAny<string>(), It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnDeletedAsync(
+                It.IsAny<string>(),
+                It.IsAny<DeviceStatus?>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Never
         );
     }
@@ -377,13 +406,13 @@ public class DeviceStatusServiceTests
     [Fact]
     [Trait("Category", "Unit")]
     [Trait("Category", "Parity")]
-    public async Task DeleteDeviceStatusAsync_WithValidFilter_ReturnsDeletedCountAndBroadcasts()
+    public async Task DeleteDeviceStatusAsync_WithValidFilter_ReturnsDeletedCountAndCallsSideEffects()
     {
         // Arrange
         var find = "{\"device\":\"dexcom\"}";
         var deletedCount = 3L;
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x => x.BulkDeleteDeviceStatusAsync(find, It.IsAny<CancellationToken>()))
             .ReturnsAsync(deletedCount);
 
@@ -395,12 +424,17 @@ public class DeviceStatusServiceTests
 
         // Assert
         Assert.Equal(deletedCount, result);
-        _mockPostgreSqlService.Verify(
+        _mockDeviceStatusRepository.Verify(
             x => x.BulkDeleteDeviceStatusAsync(find, It.IsAny<CancellationToken>()),
             Times.Once
         );
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageDeleteAsync("devicestatus", It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnBulkDeletedAsync(
+                "devicestatus",
+                deletedCount,
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Once
         );
     }
@@ -408,13 +442,13 @@ public class DeviceStatusServiceTests
     [Fact]
     [Trait("Category", "Unit")]
     [Trait("Category", "Parity")]
-    public async Task DeleteDeviceStatusAsync_WithNoMatches_ReturnsZeroAndDoesNotBroadcast()
+    public async Task DeleteDeviceStatusAsync_WithNoMatches_CallsSideEffectsWithZero()
     {
         // Arrange
         var find = "{\"device\":\"nonexistent\"}";
         var deletedCount = 0L;
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x => x.BulkDeleteDeviceStatusAsync(find, It.IsAny<CancellationToken>()))
             .ReturnsAsync(deletedCount);
 
@@ -426,9 +460,14 @@ public class DeviceStatusServiceTests
 
         // Assert
         Assert.Equal(0, result);
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageDeleteAsync(It.IsAny<string>(), It.IsAny<object>()),
-            Times.Never
+        _mockSideEffects.Verify(
+            x => x.OnBulkDeletedAsync(
+                "devicestatus",
+                0,
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
+            Times.Once
         );
     }
 
@@ -443,7 +482,7 @@ public class DeviceStatusServiceTests
             new DeviceStatus { Device = "dexcom", Mills = 1234567890 },
         };
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x =>
                 x.CreateDeviceStatusAsync(deviceStatusEntries, It.IsAny<CancellationToken>())
             )
@@ -456,8 +495,13 @@ public class DeviceStatusServiceTests
                 CancellationToken.None
             )
         );
-        _mockSignalRBroadcastService.Verify(
-            x => x.BroadcastStorageCreateAsync(It.IsAny<string>(), It.IsAny<object>()),
+        _mockSideEffects.Verify(
+            x => x.OnCreatedAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<DeviceStatus>>(),
+                It.IsAny<WriteEffectOptions>(),
+                It.IsAny<CancellationToken>()
+            ),
             Times.Never
         );
     }
@@ -478,7 +522,7 @@ public class DeviceStatusServiceTests
             },
         };
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x =>
                 x.GetDeviceStatusAsync(
                     It.IsAny<int>(),
@@ -507,7 +551,7 @@ public class DeviceStatusServiceTests
         // Arrange
         var emptyDeviceStatus = new List<DeviceStatus>();
 
-        _mockPostgreSqlService
+        _mockDeviceStatusRepository
             .Setup(x =>
                 x.GetDeviceStatusAsync(
                     It.IsAny<int>(),

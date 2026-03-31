@@ -25,6 +25,13 @@ public class SubjectEntity
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
+    /// Login identifier for non-discoverable WebAuthn flows
+    /// </summary>
+    [MaxLength(50)]
+    [Column("username")]
+    public string? Username { get; set; }
+
+    /// <summary>
     /// SHA256 hash of legacy access token for secure lookup
     /// </summary>
     [MaxLength(64)]
@@ -109,6 +116,22 @@ public class SubjectEntity
     [Column("preferred_language")]
     public string? PreferredLanguage { get; set; }
 
+    /// <summary>
+    /// Approval status for access requests (e.g., "Approved", "Pending", "Denied")
+    /// Defaults to "Approved" for existing subjects
+    /// </summary>
+    [Required]
+    [MaxLength(20)]
+    [Column("approval_status")]
+    public string ApprovalStatus { get; set; } = "Approved";
+
+    /// <summary>
+    /// Optional message submitted with an access request
+    /// </summary>
+    [MaxLength(500)]
+    [Column("access_request_message")]
+    public string? AccessRequestMessage { get; set; }
+
     // Navigation properties
 
     /// <summary>
@@ -120,4 +143,14 @@ public class SubjectEntity
     /// Refresh tokens issued to this subject
     /// </summary>
     public ICollection<RefreshTokenEntity> RefreshTokens { get; set; } = new List<RefreshTokenEntity>();
+
+    /// <summary>
+    /// Passkey credentials registered by this subject
+    /// </summary>
+    public ICollection<PasskeyCredentialEntity> PasskeyCredentials { get; set; } = new List<PasskeyCredentialEntity>();
+
+    /// <summary>
+    /// TOTP credentials registered by this subject
+    /// </summary>
+    public ICollection<TotpCredentialEntity> TotpCredentials { get; set; } = new List<TotpCredentialEntity>();
 }

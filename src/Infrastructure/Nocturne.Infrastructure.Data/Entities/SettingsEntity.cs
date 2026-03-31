@@ -8,8 +8,17 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// Maps to Nocturne.Core.Models.Settings
 /// </summary>
 [Table("settings")]
-public class SettingsEntity
+public class SettingsEntity : ITenantScoped
 {
+    /// <summary>
+    /// Identifier of the tenant this setting belongs to
+    /// </summary>
+    /// <summary>
+    /// The unique identifier of the tenant this record belongs to.
+    /// </summary>
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
+
     /// <summary>
     /// Primary key - UUID Version 7 for time-ordered, globally unique identification
     /// </summary>

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models.Authorization;
@@ -14,14 +15,16 @@ namespace Nocturne.API.Services.Auth;
 public class SubjectService : ISubjectService
 {
     private readonly NocturneDbContext _dbContext;
+    private readonly IAuthAuditService _auditService;
     private readonly ILogger<SubjectService> _logger;
 
     /// <summary>
     /// Creates a new instance of SubjectService
     /// </summary>
-    public SubjectService(NocturneDbContext dbContext, ILogger<SubjectService> logger)
+    public SubjectService(NocturneDbContext dbContext, IAuthAuditService auditService, ILogger<SubjectService> logger)
     {
         _dbContext = dbContext;
+        _auditService = auditService;
         _logger = logger;
     }
 
@@ -209,6 +212,9 @@ public class SubjectService : ISubjectService
 
         _logger.LogInformation("Created subject {SubjectId} ({Name})", entity.Id, entity.Name);
 
+        await _auditService.LogAsync(AuthAuditEventType.SubjectCreated, entity.Id, success: true,
+            detailsJson: JsonSerializer.Serialize(new { name = entity.Name }));
+
         return new SubjectCreationResult
         {
             Subject = MapToModel(entity),
@@ -243,6 +249,10 @@ public class SubjectService : ISubjectService
             .FirstAsync(s => s.Id == entity.Id);
 
         _logger.LogInformation("Updated subject {SubjectId}", entity.Id);
+
+        await _auditService.LogAsync(AuthAuditEventType.SubjectUpdated, entity.Id, success: true,
+            detailsJson: JsonSerializer.Serialize(new { name = entity.Name }));
+
         return MapToModel(entity);
     }
 
@@ -265,6 +275,9 @@ public class SubjectService : ISubjectService
         await _dbContext.SaveChangesAsync();
 
         _logger.LogInformation("Deleted subject {SubjectId}", subjectId);
+
+        await _auditService.LogAsync(AuthAuditEventType.SubjectDeleted, subjectId, success: true);
+
         return true;
     }
 
@@ -439,6 +452,10 @@ public class SubjectService : ISubjectService
             roleName,
             subjectId
         );
+
+        await _auditService.LogAsync(AuthAuditEventType.RoleAssigned, subjectId, success: true,
+            detailsJson: JsonSerializer.Serialize(new { role = roleName, assigned_by = assignedBy }));
+
         return true;
     }
 
@@ -462,6 +479,9 @@ public class SubjectService : ISubjectService
                 roleName,
                 subjectId
             );
+
+            await _auditService.LogAsync(AuthAuditEventType.RoleRemoved, subjectId, success: true,
+                detailsJson: JsonSerializer.Serialize(new { role = roleName }));
         }
 
         return result > 0;
@@ -556,6 +576,59 @@ public class SubjectService : ISubjectService
                 s.SetProperty(e => e.LastLoginAt, DateTime.UtcNow)
                     .SetProperty(e => e.UpdatedAt, DateTime.UtcNow)
             );
+    }
+
+    /// <inheritdoc />
+    public async Task<AuthMethodGuardResult> HasAlternativeAuthMethodAsync(Guid subjectId, AuthMethodType excluding)
+    {
+        var hasOidc = excluding != AuthMethodType.Oidc
+            && await _dbContext.Subjects.AnyAsync(s => s.Id == subjectId && s.OidcSubjectId != null);
+
+        var passkeyCount = await _dbContext.PasskeyCredentials.CountAsync(c => c.SubjectId == subjectId);
+        var totpCount = await _dbContext.TotpCredentials.CountAsync(c => c.SubjectId == subjectId);
+
+        // Count alternatives: other method types, OR >1 of the same type being removed
+        var otherPasskeys = excluding == AuthMethodType.Passkey ? 0 : passkeyCount;
+        var otherTotp = excluding == AuthMethodType.Totp ? 0 : totpCount;
+        var sameTypeCount = excluding switch
+        {
+            AuthMethodType.Passkey => passkeyCount,
+            AuthMethodType.Totp => totpCount,
+            _ => 0,
+        };
+
+        // User can delete if they have other method types OR >1 of the same type
+        if (hasOidc || otherPasskeys > 0 || otherTotp > 0 || sameTypeCount > 1)
+        {
+            return new AuthMethodGuardResult(HasAlternative: true, LastRemainingMethodName: null, LastRemainingMethodType: null);
+        }
+
+        // This is the user's last credential and only auth method type.
+        string? lastMethodName = null;
+        AuthMethodType? lastMethodType = excluding;
+
+        switch (excluding)
+        {
+            case AuthMethodType.Passkey:
+                lastMethodName = await _dbContext.PasskeyCredentials
+                    .Where(c => c.SubjectId == subjectId)
+                    .Select(c => c.Label ?? "passkey")
+                    .FirstOrDefaultAsync();
+                break;
+
+            case AuthMethodType.Totp:
+                lastMethodName = await _dbContext.TotpCredentials
+                    .Where(c => c.SubjectId == subjectId)
+                    .Select(c => c.Label ?? "TOTP application")
+                    .FirstOrDefaultAsync();
+                break;
+
+            case AuthMethodType.Oidc:
+                lastMethodName = "OIDC identity";
+                break;
+        }
+
+        return new AuthMethodGuardResult(HasAlternative: false, LastRemainingMethodName: lastMethodName, LastRemainingMethodType: lastMethodType);
     }
 
     /// <summary>

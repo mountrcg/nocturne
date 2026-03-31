@@ -2,7 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
 
 namespace Nocturne.API.Services;
 
@@ -11,7 +11,12 @@ namespace Nocturne.API.Services;
 /// </summary>
 public class DDataService : IDDataService
 {
-    private readonly IPostgreSqlService _postgreSqlService;
+    private readonly IEntryRepository _entries;
+    private readonly ITreatmentRepository _treatments;
+    private readonly IProfileRepository _profiles;
+    private readonly IDeviceStatusRepository _deviceStatuses;
+    private readonly IFoodRepository _food;
+    private readonly IActivityRepository _activities;
     private readonly ILogger<DDataService> _logger;
 
     // Device type fields that should be considered for recent device status
@@ -27,9 +32,21 @@ public class DDataService : IDDataService
     // Constant for mmol/L to mg/dL conversion
     private const double MMOL_TO_MGDL = 18.0182;
 
-    public DDataService(IPostgreSqlService postgreSqlService, ILogger<DDataService> logger)
+    public DDataService(
+        IEntryRepository entries,
+        ITreatmentRepository treatments,
+        IProfileRepository profiles,
+        IDeviceStatusRepository deviceStatuses,
+        IFoodRepository food,
+        IActivityRepository activities,
+        ILogger<DDataService> logger)
     {
-        _postgreSqlService = postgreSqlService;
+        _entries = entries;
+        _treatments = treatments;
+        _profiles = profiles;
+        _deviceStatuses = deviceStatuses;
+        _food = food;
+        _activities = activities;
         _logger = logger;
     }
 
@@ -41,20 +58,18 @@ public class DDataService : IDDataService
     {
         var ddata = new DData { LastUpdated = timestamp };
 
-        // Load data from various collections based on timestamp
-        var tasks = new List<Task>
-        {
-            LoadSgvsAsync(ddata, timestamp, cancellationToken),
-            LoadTreatmentsAsync(ddata, timestamp, cancellationToken),
-            LoadMbgsAsync(ddata, timestamp, cancellationToken),
-            LoadCalsAsync(ddata, timestamp, cancellationToken),
-            LoadProfilesAsync(ddata, cancellationToken),
-            LoadDeviceStatusAsync(ddata, timestamp, cancellationToken),
-            LoadFoodAsync(ddata, cancellationToken),
-            LoadActivityAsync(ddata, timestamp, cancellationToken),
-            LoadDbStatsAsync(ddata, cancellationToken),
-        };
-        await Task.WhenAll(tasks);
+        // Load data from various collections based on timestamp.
+        // Fetched sequentially — the underlying service shares a scoped DbContext
+        // which is not thread-safe for concurrent access.
+        await LoadSgvsAsync(ddata, timestamp, cancellationToken);
+        await LoadTreatmentsAsync(ddata, timestamp, cancellationToken);
+        await LoadMbgsAsync(ddata, timestamp, cancellationToken);
+        await LoadCalsAsync(ddata, timestamp, cancellationToken);
+        await LoadProfilesAsync(ddata, cancellationToken);
+        await LoadDeviceStatusAsync(ddata, timestamp, cancellationToken);
+        await LoadFoodAsync(ddata, cancellationToken);
+        await LoadActivityAsync(ddata, timestamp, cancellationToken);
+        await LoadDbStatsAsync(ddata, cancellationToken);
 
         // Process treatments to create filtered lists
         var processedTreatments = ProcessTreatments(ddata.Treatments, false);
@@ -68,6 +83,13 @@ public class DDataService : IDDataService
         ddata.ProfileTreatments = processedTreatments.ProfileTreatments;
         ddata.TempBasalTreatments = processedTreatments.TempBasalTreatments;
         ddata.TempTargetTreatments = processedTreatments.TempTargetTreatments;
+
+        // Compute lastProfileFromSwitch: latest zero-duration Profile Switch before request time
+        ddata.LastProfileFromSwitch = ddata.ProfileTreatments
+            .Where(t => (!t.Duration.HasValue || t.Duration == 0) && t.Mills <= timestamp)
+            .OrderByDescending(t => t.Mills)
+            .Select(t => t.Profile)
+            .FirstOrDefault();
 
         // Set the most recent calibration
         if (ddata.Cals.Count > 0)
@@ -203,6 +225,13 @@ public class DDataService : IDDataService
         }
         tempTargetTreatments = ConvertTempTargetUnits(tempTargetTreatments);
         ddata.TempTargetTreatments = ProcessDurations(tempTargetTreatments, false);
+
+        // Compute lastProfileFromSwitch: latest zero-duration Profile Switch
+        ddata.LastProfileFromSwitch = ddata.ProfileTreatments
+            .Where(t => !t.Duration.HasValue || t.Duration == 0)
+            .OrderByDescending(t => t.Mills)
+            .Select(t => t.Profile)
+            .FirstOrDefault();
 
         return ddata;
     }
@@ -581,7 +610,7 @@ public class DDataService : IDDataService
         try
         {
             // Load SGV entries with type filter - reduced count to prevent memory issues
-            var sgvs = await _postgreSqlService.GetEntriesAsync(
+            var sgvs = await _entries.GetEntriesAsync(
                 type: "sgv",
                 count: 1000,
                 skip: 0,
@@ -604,7 +633,7 @@ public class DDataService : IDDataService
     {
         try
         {
-            var treatments = await _postgreSqlService.GetTreatmentsAsync(
+            var treatments = await _treatments.GetTreatmentsAsync(
                 count: 1000,
                 skip: 0,
                 cancellationToken: cancellationToken
@@ -627,7 +656,7 @@ public class DDataService : IDDataService
         try
         {
             // Load MBG entries with type filter - reduced count to prevent memory issues
-            var mbgs = await _postgreSqlService.GetEntriesAsync(
+            var mbgs = await _entries.GetEntriesAsync(
                 type: "mbg",
                 count: 1000,
                 skip: 0,
@@ -651,7 +680,7 @@ public class DDataService : IDDataService
         try
         {
             // Load calibration entries with type filter - reduced count to prevent memory issues
-            var cals = await _postgreSqlService.GetEntriesAsync(
+            var cals = await _entries.GetEntriesAsync(
                 type: "cal",
                 count: 1000,
                 skip: 0,
@@ -670,7 +699,7 @@ public class DDataService : IDDataService
     {
         try
         {
-            var profiles = await _postgreSqlService.GetProfilesAsync(
+            var profiles = await _profiles.GetProfilesAsync(
                 count: 10,
                 skip: 0,
                 cancellationToken: cancellationToken
@@ -692,7 +721,7 @@ public class DDataService : IDDataService
     {
         try
         {
-            var deviceStatuses = await _postgreSqlService.GetDeviceStatusAsync(
+            var deviceStatuses = await _deviceStatuses.GetDeviceStatusAsync(
                 count: 1000,
                 skip: 0,
                 cancellationToken: cancellationToken
@@ -710,7 +739,7 @@ public class DDataService : IDDataService
     {
         try
         {
-            var food = await _postgreSqlService.GetFoodAsync(cancellationToken: cancellationToken);
+            var food = await _food.GetFoodAsync(cancellationToken: cancellationToken);
             ddata.Food = food.ToList();
         }
         catch (Exception ex)
@@ -728,7 +757,7 @@ public class DDataService : IDDataService
     {
         try
         {
-            var activities = await _postgreSqlService.GetActivitiesAsync(
+            var activities = await _activities.GetActivitiesAsync(
                 count: 1000,
                 skip: 0,
                 cancellationToken: cancellationToken

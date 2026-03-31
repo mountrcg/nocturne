@@ -10,7 +10,7 @@ namespace Nocturne.API.Hubs;
 /// <summary>
 /// SignalR hub for real-time data updates, replacing socket.io main data connection
 /// </summary>
-public class DataHub : Hub
+public class DataHub : TenantAwareHub
 {
     private readonly ILogger<DataHub> _logger;
     private readonly Nocturne.Core.Contracts.IAuthorizationService _authorizationService;
@@ -77,14 +77,14 @@ public class DataHub : Hub
 
             if (isAuthorized)
             {
-                // Add connection to authorized group
-                await Groups.AddToGroupAsync(Context.ConnectionId, "authorized");
+                // Add connection to tenant-scoped authorized group
+                await Groups.AddToGroupAsync(Context.ConnectionId, TenantGroup("authorized"));
 
                 // If user is admin, also add to admin group for admin-specific notifications
                 var httpContext = Context.GetHttpContext();
                 if (httpContext?.IsAdmin() == true)
                 {
-                    await Groups.AddToGroupAsync(Context.ConnectionId, "admin");
+                    await Groups.AddToGroupAsync(Context.ConnectionId, TenantGroup("admin"));
                     _logger.LogDebug(
                         "Client {ConnectionId} added to admin group",
                         Context.ConnectionId
@@ -244,7 +244,7 @@ public class DataHub : Hub
             {
                 if (enabledCollections.Contains(collection))
                 {
-                    await Groups.AddToGroupAsync(Context.ConnectionId, collection);
+                    await Groups.AddToGroupAsync(Context.ConnectionId, TenantGroup(collection));
                     subscribed.Add(collection);
                     _logger.LogDebug(
                         "Client {ConnectionId} subscribed to collection {Collection}",
@@ -269,8 +269,13 @@ public class DataHub : Hub
 
     public override async Task OnConnectedAsync()
     {
-        _logger.LogInformation("Client {ConnectionId} connected to DataHub", Context.ConnectionId);
+        // base.OnConnectedAsync() validates tenant context from the HTTP upgrade handshake
         await base.OnConnectedAsync();
+        _logger.LogInformation(
+            "Client {ConnectionId} connected to DataHub for tenant {TenantSlug}",
+            Context.ConnectionId,
+            TenantContext?.Slug
+        );
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)

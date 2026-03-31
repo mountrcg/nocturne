@@ -1,13 +1,14 @@
 using Nocturne.API.Models;
 using Nocturne.Connectors.Core.Services;
 using Nocturne.Core.Contracts;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Models.Configuration;
+using Nocturne.Core.Contracts.Repositories;
 
 namespace Nocturne.API.Services;
 
 public class ConnectorHealthService(
     IConfiguration configuration,
-    IPostgreSqlService postgreSqlService,
+    IEntryRepository entries,
     IConnectorConfigurationService connectorConfigService,
     ILogger<ConnectorHealthService> logger
 ) : IConnectorHealthService
@@ -44,14 +45,11 @@ public class ConnectorHealthService(
             results.Add(status);
         }
 
-        // Filter out connectors that have no data and are not enabled (truly unused)
+        // Filter out connectors that are not configured and have no data (truly unused)
         return results
             .Where(r =>
-                r.IsHealthy
-                || // Running and healthy
-                r.Status == "Disabled" && r.TotalEntries > 0
-                || // Disabled but has historical data
-                r.Status != "Disabled" // Any other status (unhealthy, unreachable, etc.)
+                r.State != "Not Configured"
+                || r.TotalEntries > 0
             )
             .ToList();
     }
@@ -61,14 +59,34 @@ public class ConnectorHealthService(
         CancellationToken cancellationToken
     )
     {
-        var enabledConfig = await GetConnectorEnabledConfigAsync(
+        // Query configuration once for both enabled state and health state
+        var dbConfig = await connectorConfigService.GetConfigurationAsync(
             connector.Id,
-            connector.ConfigKey,
             cancellationToken
         );
 
+        // Determine enabled state (check environment config first)
+        var envEnabled = configuration.GetValue<bool?>(
+            $"Parameters:Connectors:{connector.ConfigKey}:Enabled"
+        );
+        var enabledConfig = envEnabled == false ? false : (dbConfig?.IsActive ?? envEnabled);
+
+        // Extract health state from the same config
+        ConnectorHealthStateDto? healthState = null;
+        if (dbConfig != null)
+        {
+            healthState = new ConnectorHealthStateDto
+            {
+                LastSyncAttempt = dbConfig.LastSyncAttempt,
+                LastSuccessfulSync = dbConfig.LastSuccessfulSync,
+                LastErrorMessage = dbConfig.LastErrorMessage,
+                LastErrorAt = dbConfig.LastErrorAt,
+                IsHealthy = dbConfig.IsHealthy
+            };
+        }
+
         // Always get database stats for historical data (entries + treatments + state spans)
-        var dbStats = await postgreSqlService.GetEntryStatsBySourceAsync(
+        var dbStats = await entries.GetEntryStatsBySourceAsync(
             connector.DataSourceId,
             cancellationToken
         );
@@ -83,25 +101,9 @@ public class ConnectorHealthService(
             dbStats.TotalStateSpans
         );
 
-        // Build breakdown dictionaries
-        var totalBreakdown = new Dictionary<string, long>();
-        var last24HBreakdown = new Dictionary<string, int>();
-
-        if (dbStats.TotalEntries > 0)
-        {
-            totalBreakdown["Entries"] = dbStats.TotalEntries;
-            last24HBreakdown["Entries"] = dbStats.EntriesLast24Hours;
-        }
-        if (dbStats.TotalTreatments > 0)
-        {
-            totalBreakdown["Treatments"] = dbStats.TotalTreatments;
-            last24HBreakdown["Treatments"] = dbStats.TreatmentsLast24Hours;
-        }
-        if (dbStats.TotalStateSpans > 0)
-        {
-            totalBreakdown["StateSpans"] = dbStats.TotalStateSpans;
-            last24HBreakdown["StateSpans"] = dbStats.StateSpansLast24Hours;
-        }
+        // Use per-type breakdown dictionaries from database stats
+        var totalBreakdown = dbStats.TypeBreakdown;
+        var last24HBreakdown = dbStats.TypeBreakdownLast24Hours;
 
         // If explicitly disabled, return disabled status without checking health
         if (enabledConfig == false)
@@ -118,18 +120,59 @@ public class ConnectorHealthService(
                 EntriesLast24Hours = dbStats.ItemsLast24Hours,
                 State = "Disabled",
                 IsHealthy = false,
+                StateMessage = healthState?.LastErrorMessage,
+                LastSyncAttempt = healthState?.LastSyncAttempt,
+                LastSuccessfulSync = healthState?.LastSuccessfulSync,
+                LastErrorAt = healthState?.LastErrorAt,
                 TotalItemsBreakdown = totalBreakdown.Count > 0 ? totalBreakdown : null,
                 ItemsLast24HoursBreakdown = last24HBreakdown.Count > 0 ? last24HBreakdown : null,
             };
+        }
+
+        // Derive state from actual health and sync history, not just enabled flag
+        var isEnabled = enabledConfig == true;
+        // Consider a connector as having synced if it has a recorded successful sync
+        // OR if it has data in the database (legacy connectors that synced before health tracking)
+        var hasEverSynced = healthState?.LastSuccessfulSync != null || dbStats.TotalItems > 0;
+        var isHealthy = healthState?.IsHealthy ?? false;
+        var hasError = healthState != null && !healthState.IsHealthy && healthState.LastErrorAt != null;
+
+        string state;
+        bool healthy;
+
+        if (!isEnabled)
+        {
+            state = "Not Configured";
+            healthy = false;
+        }
+        else if (hasError)
+        {
+            state = "Error";
+            healthy = false;
+        }
+        else if (!hasEverSynced)
+        {
+            // Enabled but never successfully synced — waiting for first sync
+            state = "Configured";
+            healthy = false;
+        }
+        else
+        {
+            state = "Running";
+            healthy = true;
         }
 
         var liveStatus = new ConnectorStatusDto
         {
             Id = connector.Id,
             Name = connector.Id,
-            Status = enabledConfig == true ? "Running" : "Not Configured",
-            IsHealthy = enabledConfig == true,
-            State = enabledConfig == true ? "Running" : "Not Configured",
+            Status = state,
+            IsHealthy = healthy,
+            State = state,
+            StateMessage = healthState?.LastErrorMessage,
+            LastSyncAttempt = healthState?.LastSyncAttempt,
+            LastSuccessfulSync = healthState?.LastSuccessfulSync,
+            LastErrorAt = healthState?.LastErrorAt,
             // ALWAYS use database stats for entry counts - sidecar stats may be stale/cached
             // DB is the single source of truth for how much data exists
             TotalEntries = dbStats.TotalItems,
@@ -140,40 +183,5 @@ public class ConnectorHealthService(
         };
 
         return liveStatus;
-    }
-
-    /// <summary>
-    /// Gets the connector enabled configuration.
-    /// Checks both environment configuration and database-stored runtime configuration.
-    /// Environment config (appsettings) is checked first as the source of truth for whether a connector
-    /// should be running at all. Database config can only enable a connector that is available in the environment.
-    /// Returns true if explicitly enabled, false if explicitly disabled, null if not configured.
-    /// </summary>
-    private async Task<bool?> GetConnectorEnabledConfigAsync(
-        string connectorId,
-        string configKey,
-        CancellationToken cancellationToken
-    )
-    {
-        // First check environment configuration: Parameters:Connectors:{ConfigKey}:Enabled
-        // This determines if the connector is even available/running in Aspire
-        var envEnabled = configuration.GetValue<bool?>(
-            $"Parameters:Connectors:{configKey}:Enabled"
-        );
-
-        // If environment config explicitly disables the connector, it's not running in Aspire
-        // so we shouldn't try to reach it regardless of DB config
-        if (envEnabled == false)
-        {
-            return false;
-        }
-
-        // Now check database-stored runtime configuration
-        // This is where the UI stores the enabled state
-        var dbConfig = await connectorConfigService.GetConfigurationAsync(
-            connectorId,
-            cancellationToken
-        );
-        return dbConfig?.IsActive ?? envEnabled;
     }
 }

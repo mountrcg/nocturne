@@ -1,6 +1,7 @@
 using Nocturne.API.Services;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models;
+using Nocturne.Core.Models.V4;
 using Xunit;
 
 namespace Nocturne.API.Tests.Services;
@@ -253,6 +254,365 @@ public class IobServiceTests
         Assert.True(result.Iob > 0);
         Assert.Equal("Care Portal", result.Source);
     }
+
+    #region CalcTempBasalIob Tests
+
+    [Fact]
+    public void CalcTempBasalIob_AboveScheduled_ShouldReturnPositiveIob()
+    {
+        // Arrange — temp basal at 1.5 U/hr vs scheduled 0.5 U/hr, ran for 30 minutes
+        var now = DateTimeOffset.UtcNow;
+        var tempBasal = new TempBasal
+        {
+            StartTimestamp = now.AddMinutes(-30).UtcDateTime,
+            EndTimestamp = now.AddMinutes(-1).UtcDateTime,
+            Rate = 1.5,
+            ScheduledRate = 0.5,
+            Origin = TempBasalOrigin.Algorithm,
+        };
+        var time = now.ToUnixTimeMilliseconds();
+
+        // Act
+        var result = _iobService.CalcTempBasalIob(tempBasal, _testProfile, time);
+
+        // Assert — excess insulin = (1.5 - 0.5) * (29/60) ≈ 0.483 U, with linear decay
+        Assert.True(result.IobContrib > 0);
+    }
+
+    [Fact]
+    public void CalcTempBasalIob_AtScheduledRate_ShouldReturnZero()
+    {
+        // Arrange — rate equals scheduled, no excess
+        var now = DateTimeOffset.UtcNow;
+        var tempBasal = new TempBasal
+        {
+            StartTimestamp = now.AddMinutes(-30).UtcDateTime,
+            EndTimestamp = now.AddMinutes(-1).UtcDateTime,
+            Rate = 1.0,
+            ScheduledRate = 1.0,
+            Origin = TempBasalOrigin.Algorithm,
+        };
+
+        // Act
+        var result = _iobService.CalcTempBasalIob(tempBasal, _testProfile, now.ToUnixTimeMilliseconds());
+
+        // Assert
+        Assert.Equal(0.0, result.IobContrib);
+    }
+
+    [Fact]
+    public void CalcTempBasalIob_BelowScheduled_ShouldReturnZero()
+    {
+        // Arrange — rate below scheduled, clamped to 0
+        var now = DateTimeOffset.UtcNow;
+        var tempBasal = new TempBasal
+        {
+            StartTimestamp = now.AddMinutes(-30).UtcDateTime,
+            EndTimestamp = now.AddMinutes(-1).UtcDateTime,
+            Rate = 0.3,
+            ScheduledRate = 1.0,
+            Origin = TempBasalOrigin.Algorithm,
+        };
+
+        // Act
+        var result = _iobService.CalcTempBasalIob(tempBasal, _testProfile, now.ToUnixTimeMilliseconds());
+
+        // Assert
+        Assert.Equal(0.0, result.IobContrib);
+    }
+
+    [Fact]
+    public void CalcTempBasalIob_Suspended_ShouldReturnZero()
+    {
+        // Arrange — suspended origin treats rate as 0
+        var now = DateTimeOffset.UtcNow;
+        var tempBasal = new TempBasal
+        {
+            StartTimestamp = now.AddMinutes(-30).UtcDateTime,
+            EndTimestamp = now.AddMinutes(-1).UtcDateTime,
+            Rate = 1.5,
+            ScheduledRate = 0.5,
+            Origin = TempBasalOrigin.Suspended,
+        };
+
+        // Act
+        var result = _iobService.CalcTempBasalIob(tempBasal, _testProfile, now.ToUnixTimeMilliseconds());
+
+        // Assert — suspended overrides rate to 0, so 0 - 0.5 < 0, clamped to 0
+        Assert.Equal(0.0, result.IobContrib);
+    }
+
+    [Fact]
+    public void CalcTempBasalIob_NoEndTime_ShouldReturnZero()
+    {
+        // Arrange — active temp basal with null EndTimestamp
+        var now = DateTimeOffset.UtcNow;
+        var tempBasal = new TempBasal
+        {
+            StartTimestamp = now.AddMinutes(-30).UtcDateTime,
+            EndTimestamp = null,
+            Rate = 2.0,
+            ScheduledRate = 0.5,
+            Origin = TempBasalOrigin.Algorithm,
+        };
+
+        // Act
+        var result = _iobService.CalcTempBasalIob(tempBasal, _testProfile, now.ToUnixTimeMilliseconds());
+
+        // Assert
+        Assert.Equal(0.0, result.IobContrib);
+    }
+
+    [Fact]
+    public void CalcTempBasalIob_AfterDIA_ShouldReturnZero()
+    {
+        // Arrange — temp basal started > DIA hours ago, fully decayed
+        var now = DateTimeOffset.UtcNow;
+        var tempBasal = new TempBasal
+        {
+            StartTimestamp = now.AddHours(-4).UtcDateTime,
+            EndTimestamp = now.AddHours(-3.5).UtcDateTime,
+            Rate = 2.0,
+            ScheduledRate = 0.5,
+            Origin = TempBasalOrigin.Algorithm,
+        };
+
+        // Act — with default 3-hour DIA, 4 hours ago is fully decayed
+        var result = _iobService.CalcTempBasalIob(tempBasal, _testProfile, now.ToUnixTimeMilliseconds());
+
+        // Assert
+        Assert.Equal(0.0, result.IobContrib);
+    }
+
+    [Fact]
+    public void CalcTempBasalIob_LinearDecay_ShouldDecreaseOverTime()
+    {
+        // Arrange — same temp basal measured at two different times
+        var now = DateTimeOffset.UtcNow;
+        var tempBasal = new TempBasal
+        {
+            StartTimestamp = now.AddMinutes(-60).UtcDateTime,
+            EndTimestamp = now.AddMinutes(-30).UtcDateTime,
+            Rate = 2.0,
+            ScheduledRate = 0.5,
+            Origin = TempBasalOrigin.Algorithm,
+        };
+
+        // Act — measure at 30 min after start vs 90 min after start
+        var earlier = _iobService.CalcTempBasalIob(tempBasal, _testProfile, now.AddMinutes(-30).ToUnixTimeMilliseconds());
+        var later = _iobService.CalcTempBasalIob(tempBasal, _testProfile, now.ToUnixTimeMilliseconds());
+
+        // Assert — IOB should be lower at the later time
+        Assert.True(earlier.IobContrib > later.IobContrib);
+        Assert.True(later.IobContrib > 0); // Still within DIA window
+    }
+
+    #endregion
+
+    #region FromTempBasals Tests
+
+    [Fact]
+    public void FromTempBasals_MultipleTempBasals_ShouldAggregateBasalIob()
+    {
+        // Arrange — two high temp basals
+        var now = DateTimeOffset.UtcNow;
+        var tempBasals = new List<TempBasal>
+        {
+            new()
+            {
+                StartTimestamp = now.AddMinutes(-60).UtcDateTime,
+                EndTimestamp = now.AddMinutes(-30).UtcDateTime,
+                Rate = 2.0,
+                ScheduledRate = 0.5,
+                Origin = TempBasalOrigin.Algorithm,
+            },
+            new()
+            {
+                StartTimestamp = now.AddMinutes(-30).UtcDateTime,
+                EndTimestamp = now.AddMinutes(-5).UtcDateTime,
+                Rate = 1.8,
+                ScheduledRate = 0.5,
+                Origin = TempBasalOrigin.Algorithm,
+            },
+        };
+
+        // Act
+        var result = _iobService.FromTempBasals(tempBasals, _testProfile, now.ToUnixTimeMilliseconds());
+
+        // Assert — combined BasalIob from both temp basals
+        Assert.True(result.BasalIob.HasValue);
+        Assert.True(result.BasalIob!.Value > 0);
+    }
+
+    [Fact]
+    public void FromTempBasals_EmptyList_ShouldReturnZero()
+    {
+        // Act
+        var result = _iobService.FromTempBasals(
+            new List<TempBasal>(),
+            _testProfile,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        );
+
+        // Assert
+        Assert.Equal(0.0, result.Iob);
+        Assert.Null(result.BasalIob);
+    }
+
+    [Fact]
+    public void FromTempBasals_SetsBasalIobNotBolus()
+    {
+        // Arrange
+        var now = DateTimeOffset.UtcNow;
+        var tempBasals = new List<TempBasal>
+        {
+            new()
+            {
+                StartTimestamp = now.AddMinutes(-30).UtcDateTime,
+                EndTimestamp = now.AddMinutes(-5).UtcDateTime,
+                Rate = 2.0,
+                ScheduledRate = 0.5,
+                Origin = TempBasalOrigin.Algorithm,
+            },
+        };
+
+        // Act
+        var result = _iobService.FromTempBasals(tempBasals, _testProfile, now.ToUnixTimeMilliseconds());
+
+        // Assert — Iob (bolus) should be 0, BasalIob should have the value
+        Assert.Equal(0.0, result.Iob);
+        Assert.True(result.BasalIob.HasValue);
+        Assert.True(result.BasalIob!.Value > 0);
+    }
+
+    #endregion
+
+    #region Per-Treatment Insulin Context Tests
+
+    [Fact]
+    public void CalcTreatment_WithInsulinContext_ShouldUseContextDia()
+    {
+        // Arrange: treatment with InsulinContext { Dia = 5.0, Peak = 90 }
+        // With a 5-hour DIA, insulin should still be active at 3 hours
+        var time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var treatment = new Treatment
+        {
+            Mills = time - 1,
+            Insulin = 1.0,
+            InsulinContext = new TreatmentInsulinContext
+            {
+                PatientInsulinId = Guid.NewGuid(),
+                InsulinName = "Fiasp",
+                Dia = 5.0,
+                Peak = 90,
+                Curve = "rapid-acting",
+                Concentration = 100,
+            },
+        };
+
+        // Act: calculate IOB at 3 hours after treatment
+        var result = _iobService.CalcTreatment(treatment, _testProfile, time + 3 * 60 * 60 * 1000);
+
+        // Assert: IOB is NOT zero (5.0hr DIA means insulin still active at 3hrs)
+        // With default 3hr DIA this would be zero, proving the context DIA is used
+        Assert.True(result.IobContrib > 0, "IOB should still be active at 3hrs with 5hr DIA");
+    }
+
+    [Fact]
+    public void CalcTreatment_WithoutInsulinContext_ShouldUseProfileDia()
+    {
+        // Arrange: treatment with null InsulinContext — should use profile DIA (3.0)
+        var time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var treatment = new Treatment
+        {
+            Mills = time - 1,
+            Insulin = 1.0,
+            InsulinContext = null,
+        };
+
+        // Act: calculate IOB at 3 hours (at DIA boundary for default 3hr profile)
+        var result = _iobService.CalcTreatment(treatment, _testProfile, time + 3 * 60 * 60 * 1000);
+
+        // Assert: uses profile DIA of 3.0 — insulin fully decayed at 3 hours
+        Assert.Equal(0.0, result.IobContrib, 3);
+    }
+
+    [Fact]
+    public void CalcTreatment_WithInsulinContext_ShouldUseContextPeak()
+    {
+        // Arrange: treatment with a later peak (120 min vs default 75 min)
+        var time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var treatmentWithContext = new Treatment
+        {
+            Mills = time - 1,
+            Insulin = 1.0,
+            InsulinContext = new TreatmentInsulinContext
+            {
+                PatientInsulinId = Guid.NewGuid(),
+                InsulinName = "Regular",
+                Dia = 3.0, // Same DIA as profile to isolate peak effect
+                Peak = 120,
+                Curve = "rapid-acting",
+                Concentration = 100,
+            },
+        };
+        var treatmentWithoutContext = new Treatment
+        {
+            Mills = time - 1,
+            Insulin = 1.0,
+            InsulinContext = null,
+        };
+
+        // Act: calculate at 80 minutes (after default 75-min peak but before 120-min peak)
+        var atTime = time + 80 * 60 * 1000;
+        var resultWithContext = _iobService.CalcTreatment(treatmentWithContext, _testProfile, atTime);
+        var resultWithoutContext = _iobService.CalcTreatment(treatmentWithoutContext, _testProfile, atTime);
+
+        // Assert: different peak produces different IOB curves at the same time point
+        Assert.NotEqual(
+            Math.Round(resultWithContext.IobContrib, 5),
+            Math.Round(resultWithoutContext.IobContrib, 5)
+        );
+    }
+
+    [Fact]
+    public void FromTreatments_MixedContextAndNoContext_ShouldUseRespectiveDia()
+    {
+        // Arrange: two treatments — one with 5hr context DIA, one with default profile DIA
+        var time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var treatments = new List<Treatment>
+        {
+            new()
+            {
+                Mills = time - 1,
+                Insulin = 1.0,
+                InsulinContext = new TreatmentInsulinContext
+                {
+                    PatientInsulinId = Guid.NewGuid(),
+                    InsulinName = "Fiasp",
+                    Dia = 5.0,
+                    Peak = 90,
+                    Curve = "rapid-acting",
+                    Concentration = 100,
+                },
+            },
+            new()
+            {
+                Mills = time - 1,
+                Insulin = 1.0,
+                InsulinContext = null, // Uses profile DIA = 3.0
+            },
+        };
+
+        // Act: at 3 hours, the profile-DIA treatment is fully decayed but the 5hr one isn't
+        var result = _iobService.FromTreatments(treatments, _testProfile, time + 3 * 60 * 60 * 1000);
+
+        // Assert: IOB > 0 (from the 5hr DIA treatment) but < 1.0 (one treatment fully decayed)
+        Assert.True(result.Iob > 0, "Should have IOB from the 5hr DIA treatment");
+        Assert.True(result.Iob < 1.0, "Should be less than full dose since one treatment is fully decayed");
+    }
+
+    #endregion
 
     #region Exact Legacy Test Cases
 

@@ -1,9 +1,10 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Nocturne.API.Attributes;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
 
 namespace Nocturne.API.Controllers.V3;
 
@@ -13,19 +14,21 @@ namespace Nocturne.API.Controllers.V3;
 /// </summary>
 [ApiController]
 [Route("api/v3/[controller]")]
+[Authorize]
 public class TreatmentsController : BaseV3Controller<Treatment>
 {
+    private readonly ITreatmentRepository _treatments;
     private readonly ITreatmentService _treatmentService;
 
     public TreatmentsController(
-        IPostgreSqlService postgreSqlService,
-        IDataFormatService dataFormatService,
+        ITreatmentRepository treatments,
         IDocumentProcessingService documentProcessingService,
         ITreatmentService treatmentService,
         ILogger<TreatmentsController> logger
     )
-        : base(postgreSqlService, dataFormatService, documentProcessingService, logger)
+        : base(documentProcessingService, logger)
     {
+        _treatments = treatments;
         _treatmentService = treatmentService;
     }
 
@@ -34,6 +37,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
     /// </summary>
     /// <returns>V3 treatments collection response</returns>
     [HttpGet]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/treatments")]
     [ProducesResponseType(typeof(V3CollectionResponse<object>), 200)]
     [ProducesResponseType(typeof(V3ErrorResponse), 400)]
@@ -100,7 +104,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving V3 treatments");
-            return CreateV3ErrorResponse(500, "Internal server error", ex.Message);
+            return CreateV3ErrorResponse(500, "Internal server error", "An unexpected error occurred");
         }
     }
 
@@ -111,6 +115,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Single treatment in V3 format</returns>
     [HttpGet("{id}")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/treatments/:id")]
     [ProducesResponseType(typeof(Treatment), 200)]
     [ProducesResponseType(typeof(V3ErrorResponse), 404)]
@@ -145,7 +150,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving V3 treatment {Id}", id);
-            return CreateV3ErrorResponse(500, "Internal server error", ex.Message);
+            return CreateV3ErrorResponse(500, "Internal server error", "An unexpected error occurred");
         }
     }
 
@@ -222,7 +227,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
             _logger.LogDebug("Successfully created V3 treatment {Id}", createdTreatment.Id);
 
             // Set location header for created resource
-            Response.Headers["Location"] = $"/api/v3/treatments/{createdTreatment.Id}";
+            Response.Headers["Location"] = $"/api/v3/treatments/{Uri.EscapeDataString(createdTreatment.Id)}";
 
             return CreatedAtAction(
                 nameof(GetTreatment),
@@ -238,7 +243,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating V3 treatment");
-            return CreateV3ErrorResponse(500, "Internal server error", ex.Message);
+            return CreateV3ErrorResponse(500, "Internal server error", "An unexpected error occurred");
         }
     }
 
@@ -311,7 +316,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating V3 bulk treatments");
-            return CreateV3ErrorResponse(500, "Internal server error", ex.Message);
+            return CreateV3ErrorResponse(500, "Internal server error", "An unexpected error occurred");
         }
     }
 
@@ -381,7 +386,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error updating V3 treatment {Id}", id);
-            return CreateV3ErrorResponse(500, "Internal server error", ex.Message);
+            return CreateV3ErrorResponse(500, "Internal server error", "An unexpected error occurred");
         }
     }
 
@@ -423,7 +428,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deleting V3 treatment {Id}", id);
-            return CreateV3ErrorResponse(500, "Internal server error", ex.Message);
+            return CreateV3ErrorResponse(500, "Internal server error", "An unexpected error occurred");
         }
     }
 
@@ -431,6 +436,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
     /// Get treatments modified since a given timestamp (for AAPS incremental sync)
     /// </summary>
     [HttpGet("history/{lastModified:long}")]
+    [AllowAnonymous]
     [NightscoutEndpoint("/api/v3/treatments/history/{lastModified}")]
     [ProducesResponseType(typeof(object), 200)]
     [ProducesResponseType(500)]
@@ -460,7 +466,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving treatment history");
-            return CreateV3ErrorResponse(500, "Internal server error", ex.Message);
+            return CreateV3ErrorResponse(500, "Internal server error", "An unexpected error occurred");
         }
     }
 
@@ -512,7 +518,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error patching V3 treatment {Id}", id);
-            return CreateV3ErrorResponse(500, "Internal server error", ex.Message);
+            return CreateV3ErrorResponse(500, "Internal server error", "An unexpected error occurred");
         }
     }
 
@@ -613,7 +619,7 @@ public class TreatmentsController : BaseV3Controller<Treatment>
         try
         {
             // Use the count endpoint to get total
-            return await _postgreSqlService.CountTreatmentsAsync(findQuery, cancellationToken);
+            return await _treatments.CountTreatmentsAsync(findQuery, cancellationToken);
         }
         catch (Exception ex)
         {

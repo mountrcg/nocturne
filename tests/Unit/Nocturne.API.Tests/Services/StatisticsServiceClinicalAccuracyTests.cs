@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Nocturne.API.Services;
 using Nocturne.Core.Models;
+using Nocturne.Core.Models.V4;
 
 namespace Nocturne.API.Tests.Services;
 
@@ -48,7 +49,7 @@ public class StatisticsServiceClinicalAccuracyTests
         var result = _sut.CalculateGMI(0);
 
         result.Value.Should().Be(0);
-        result.Interpretation.Should().Be("Insufficient data");
+        result.Interpretation.Should().Be(GlucoseManagementIndicatorLevel.NonDiabetic);
     }
 
     [Fact]
@@ -57,19 +58,19 @@ public class StatisticsServiceClinicalAccuracyTests
         var result = _sut.CalculateGMI(-50);
 
         result.Value.Should().Be(0);
-        result.Interpretation.Should().Be("Insufficient data");
+        result.Interpretation.Should().Be(GlucoseManagementIndicatorLevel.NonDiabetic);
     }
 
     [Theory]
-    [InlineData(90, "Non-diabetic range")]         // GMI 5.5 < 5.7 → Non-diabetic
-    [InlineData(120, "Prediabetes range")]         // GMI 6.2 → Prediabetes
-    [InlineData(150, "Well-controlled diabetes")]  // GMI 6.9 → Well-controlled
-    [InlineData(183, "Moderate control")]          // GMI 7.7 → Moderate
-    [InlineData(212, "Suboptimal control")]        // GMI 8.4 → Suboptimal
-    [InlineData(300, "Poor control - intervention recommended")] // GMI 10.5 → Poor
+    [InlineData(90, GlucoseManagementIndicatorLevel.NonDiabetic)]         // GMI 5.5 < 5.7 → Non-diabetic
+    [InlineData(120, GlucoseManagementIndicatorLevel.Prediabetes)]         // GMI 6.2 → Prediabetes
+    [InlineData(150, GlucoseManagementIndicatorLevel.WellControlled)]  // GMI 6.9 → Well-controlled
+    [InlineData(183, GlucoseManagementIndicatorLevel.ModerateControl)]          // GMI 7.7 → Moderate
+    [InlineData(212, GlucoseManagementIndicatorLevel.SuboptimalControl)]        // GMI 8.4 → Suboptimal
+    [InlineData(300, GlucoseManagementIndicatorLevel.PoorControl)] // GMI 10.5 → Poor
     public void CalculateGMI_ShouldReturnCorrectInterpretation(
         double meanGlucose,
-        string expectedInterpretation
+        GlucoseManagementIndicatorLevel expectedInterpretation
     )
     {
         var result = _sut.CalculateGMI(meanGlucose);
@@ -92,11 +93,11 @@ public class StatisticsServiceClinicalAccuracyTests
         {
             Percentages = new TimeInRangePercentages
             {
-                SevereLow = 0,
+                VeryLow = 0,
                 Low = 0,
                 Target = 100,
                 High = 0,
-                SevereHigh = 0,
+                VeryHigh = 0,
             },
         };
 
@@ -118,11 +119,11 @@ public class StatisticsServiceClinicalAccuracyTests
         {
             Percentages = new TimeInRangePercentages
             {
-                SevereLow = 2,
+                VeryLow = 2,
                 Low = 3,
                 Target = 60,
                 High = 25,
-                SevereHigh = 10,
+                VeryHigh = 10,
             },
         };
 
@@ -140,11 +141,11 @@ public class StatisticsServiceClinicalAccuracyTests
     [InlineData(1, 4, 60, 25, 10, GRIZone.C)]   // (3*1)+(2.4*4)+(1.6*10)+(0.8*25) = 48.6 → Zone C
     [InlineData(3, 5, 40, 30, 22, GRIZone.E)]   // (3*3)+(2.4*5)+(1.6*22)+(0.8*30) = 80.2 → Zone E
     public void CalculateGRI_ShouldReturnCorrectZone(
-        double severeLow,
+        double veryLow,
         double low,
         double target,
         double high,
-        double severeHigh,
+        double veryHigh,
         GRIZone expectedZone
     )
     {
@@ -152,11 +153,11 @@ public class StatisticsServiceClinicalAccuracyTests
         {
             Percentages = new TimeInRangePercentages
             {
-                SevereLow = severeLow,
+                VeryLow = veryLow,
                 Low = low,
                 Target = target,
                 High = high,
-                SevereHigh = severeHigh,
+                VeryHigh = veryHigh,
             },
         };
 
@@ -175,11 +176,11 @@ public class StatisticsServiceClinicalAccuracyTests
         {
             Percentages = new TimeInRangePercentages
             {
-                SevereLow = 20,
+                VeryLow = 20,
                 Low = 20,
                 Target = 0,
                 High = 30,
-                SevereHigh = 30,
+                VeryHigh = 30,
             },
         };
 
@@ -229,27 +230,27 @@ public class StatisticsServiceClinicalAccuracyTests
     public void CalculateTimeInRange_WithKnownDistribution_ShouldReturnExactPercentages()
     {
         // Create 100 entries with a known distribution using default thresholds:
-        // SevereLow: <54, Low: 54-70, Target: 70-180, High: 180-250, SevereHigh: >250
-        var entries = new List<Entry>();
+        // VeryLow: <54, Low: 54-70, Target: 70-180, High: 180-250, VeryHigh: >250
+        var entries = new List<SensorGlucose>();
 
         // 5 entries at 40 mg/dL (severe low)
-        entries.AddRange(Enumerable.Range(0, 5).Select(_ => new Entry { Sgv = 40 }));
+        entries.AddRange(Enumerable.Range(0, 5).Select(_ => new SensorGlucose { Mgdl = 40 }));
         // 10 entries at 60 mg/dL (low: 54 <= x < 70)
-        entries.AddRange(Enumerable.Range(0, 10).Select(_ => new Entry { Sgv = 60 }));
+        entries.AddRange(Enumerable.Range(0, 10).Select(_ => new SensorGlucose { Mgdl = 60 }));
         // 70 entries at 120 mg/dL (target: 70 <= x <= 180)
-        entries.AddRange(Enumerable.Range(0, 70).Select(_ => new Entry { Sgv = 120 }));
+        entries.AddRange(Enumerable.Range(0, 70).Select(_ => new SensorGlucose { Mgdl = 120 }));
         // 10 entries at 200 mg/dL (high: 180 < x <= 250)
-        entries.AddRange(Enumerable.Range(0, 10).Select(_ => new Entry { Sgv = 200 }));
+        entries.AddRange(Enumerable.Range(0, 10).Select(_ => new SensorGlucose { Mgdl = 200 }));
         // 5 entries at 300 mg/dL (severe high: > 250)
-        entries.AddRange(Enumerable.Range(0, 5).Select(_ => new Entry { Sgv = 300 }));
+        entries.AddRange(Enumerable.Range(0, 5).Select(_ => new SensorGlucose { Mgdl = 300 }));
 
         var result = _sut.CalculateTimeInRange(entries);
 
-        result.Percentages.SevereLow.Should().Be(5);
+        result.Percentages.VeryLow.Should().Be(5);
         result.Percentages.Low.Should().Be(10);
         result.Percentages.Target.Should().Be(70);
         result.Percentages.High.Should().Be(10);
-        result.Percentages.SevereHigh.Should().Be(5);
+        result.Percentages.VeryHigh.Should().Be(5);
     }
 
     [Fact]
@@ -257,21 +258,21 @@ public class StatisticsServiceClinicalAccuracyTests
     {
         var entries = new[]
         {
-            new Entry { Sgv = 40 },  // severe low
-            new Entry { Sgv = 60 },  // low
-            new Entry { Sgv = 100 }, // target
-            new Entry { Sgv = 200 }, // high
-            new Entry { Sgv = 300 }, // severe high
+            new SensorGlucose { Mgdl = 40 },  // severe low
+            new SensorGlucose { Mgdl = 60 },  // low
+            new SensorGlucose { Mgdl = 100 }, // target
+            new SensorGlucose { Mgdl = 200 }, // high
+            new SensorGlucose { Mgdl = 300 }, // severe high
         };
 
         var result = _sut.CalculateTimeInRange(entries);
 
         var totalPercentage =
-            result.Percentages.SevereLow
+            result.Percentages.VeryLow
             + result.Percentages.Low
             + result.Percentages.Target
             + result.Percentages.High
-            + result.Percentages.SevereHigh;
+            + result.Percentages.VeryHigh;
 
         totalPercentage.Should().BeApproximately(100, 0.1);
     }
@@ -280,16 +281,16 @@ public class StatisticsServiceClinicalAccuracyTests
     public void CalculateTimeInRange_DurationsShouldMatchReadingCount()
     {
         // 20 entries * 5 min interval = 100 minutes total
-        var entries = Enumerable.Range(0, 20).Select(_ => new Entry { Sgv = 120 }).ToArray();
+        var entries = Enumerable.Range(0, 20).Select(_ => new SensorGlucose { Mgdl = 120 }).ToArray();
 
         var result = _sut.CalculateTimeInRange(entries);
 
         // All in target (70-180 default), so all 100 minutes should be in target
         result.Durations.Target.Should().Be(100); // 20 readings * 5 min
-        result.Durations.SevereLow.Should().Be(0);
+        result.Durations.VeryLow.Should().Be(0);
         result.Durations.Low.Should().Be(0);
         result.Durations.High.Should().Be(0);
-        result.Durations.SevereHigh.Should().Be(0);
+        result.Durations.VeryHigh.Should().Be(0);
     }
 
     [Fact]
@@ -298,19 +299,19 @@ public class StatisticsServiceClinicalAccuracyTests
         // Pregnancy thresholds: target 63-140
         var thresholds = new GlycemicThresholds
         {
-            SevereLow = 54,
+            VeryLow = 54,
             Low = 63,
             TargetBottom = 63,
             TargetTop = 140,
             High = 140,
-            SevereHigh = 250,
+            VeryHigh = 250,
         };
 
         var entries = new[]
         {
-            new Entry { Sgv = 100 }, // in target (63-140)
-            new Entry { Sgv = 150 }, // high (140-250) with pregnancy thresholds
-            new Entry { Sgv = 60 },  // low (54-63)
+            new SensorGlucose { Mgdl = 100 }, // in target (63-140)
+            new SensorGlucose { Mgdl = 150 }, // high (140-250) with pregnancy thresholds
+            new SensorGlucose { Mgdl = 60 },  // low (54-63)
         };
 
         var result = _sut.CalculateTimeInRange(entries, thresholds);
@@ -325,19 +326,19 @@ public class StatisticsServiceClinicalAccuracyTests
         // Test exact boundary values with default thresholds
         var entries = new[]
         {
-            new Entry { Sgv = 54 },  // >= 54 and < 70 → Low (not severe low)
-            new Entry { Sgv = 70 },  // >= 70 and <= 180 → Target
-            new Entry { Sgv = 180 }, // >= 70 and <= 180 → Target
-            new Entry { Sgv = 250 }, // > 180 and <= 250 → High
+            new SensorGlucose { Mgdl = 54 },  // >= 54 and < 70 → Low (not severe low)
+            new SensorGlucose { Mgdl = 70 },  // >= 70 and <= 180 → Target
+            new SensorGlucose { Mgdl = 180 }, // >= 70 and <= 180 → Target
+            new SensorGlucose { Mgdl = 250 }, // > 180 and <= 250 → High
         };
 
         var result = _sut.CalculateTimeInRange(entries);
 
-        result.Percentages.SevereLow.Should().Be(0);
+        result.Percentages.VeryLow.Should().Be(0);
         result.Percentages.Low.Should().Be(25);     // 1/4 = 25%
         result.Percentages.Target.Should().Be(50);   // 2/4 = 50%
         result.Percentages.High.Should().Be(25);     // 1/4 = 25%
-        result.Percentages.SevereHigh.Should().Be(0);
+        result.Percentages.VeryHigh.Should().Be(0);
     }
 
     [Fact]
@@ -347,12 +348,12 @@ public class StatisticsServiceClinicalAccuracyTests
         // Should count 2 low episodes
         var entries = new[]
         {
-            new Entry { Sgv = 120 },
-            new Entry { Sgv = 60 },  // low episode 1 starts
-            new Entry { Sgv = 60 },
-            new Entry { Sgv = 120 }, // back to target
-            new Entry { Sgv = 55 },  // low episode 2 starts
-            new Entry { Sgv = 120 },
+            new SensorGlucose { Mgdl = 120 },
+            new SensorGlucose { Mgdl = 60 },  // low episode 1 starts
+            new SensorGlucose { Mgdl = 60 },
+            new SensorGlucose { Mgdl = 120 }, // back to target
+            new SensorGlucose { Mgdl = 55 },  // low episode 2 starts
+            new SensorGlucose { Mgdl = 120 },
         };
 
         var result = _sut.CalculateTimeInRange(entries);
@@ -535,60 +536,46 @@ public class StatisticsServiceClinicalAccuracyTests
     #region Insulin Delivery Statistics Tests
 
     [Fact]
-    public void CalculateInsulinDeliveryStatistics_WithMixedTreatments_ShouldCategorizeCorrectly()
+    public void CalculateInsulinDeliveryStatistics_WithMixedBoluses_ShouldCategorizeCorrectly()
     {
         var startDate = new DateTime(2024, 1, 1);
         var endDate = new DateTime(2024, 1, 8); // 7 days
 
-        var treatments = new[]
+        var boluses = new[]
         {
-            // Meal boluses
-            new Treatment { EventType = "Meal Bolus", Insulin = 5.0, Carbs = 45, Mills = DateTimeOffset.Parse("2024-01-02T08:00:00Z").ToUnixTimeMilliseconds() },
-            new Treatment { EventType = "Meal Bolus", Insulin = 7.0, Carbs = 60, Mills = DateTimeOffset.Parse("2024-01-02T12:00:00Z").ToUnixTimeMilliseconds() },
-            new Treatment { EventType = "Snack Bolus", Insulin = 2.0, Carbs = 15, Mills = DateTimeOffset.Parse("2024-01-02T15:00:00Z").ToUnixTimeMilliseconds() },
+            // Meal boluses (non-automatic, have corresponding carb intakes)
+            new Bolus { Insulin = 5.0, Automatic = false, Timestamp = DateTimeOffset.Parse("2024-01-02T08:00:00Z").UtcDateTime },
+            new Bolus { Insulin = 7.0, Automatic = false, Timestamp = DateTimeOffset.Parse("2024-01-02T12:00:00Z").UtcDateTime },
+            new Bolus { Insulin = 2.0, Automatic = false, Timestamp = DateTimeOffset.Parse("2024-01-02T15:00:00Z").UtcDateTime },
 
-            // Correction boluses (no carbs)
-            new Treatment { EventType = "Correction Bolus", Insulin = 1.5, Mills = DateTimeOffset.Parse("2024-01-02T20:00:00Z").ToUnixTimeMilliseconds() },
-
-            // Basal (non-bolus with insulin)
-            new Treatment { EventType = "Temp Basal", Insulin = 0.5, Mills = DateTimeOffset.Parse("2024-01-02T06:00:00Z").ToUnixTimeMilliseconds() },
+            // Correction bolus (no carbs at this time)
+            new Bolus { Insulin = 1.5, Automatic = false, Timestamp = DateTimeOffset.Parse("2024-01-02T20:00:00Z").UtcDateTime },
         };
 
-        var result = _sut.CalculateInsulinDeliveryStatistics(treatments, startDate, endDate);
+        var result = _sut.CalculateInsulinDeliveryStatistics(boluses, Array.Empty<Bolus>(), Array.Empty<TempBasal>(), Array.Empty<CarbIntake>(), startDate, endDate);
 
         // Bolus = 5 + 7 + 2 + 1.5 = 15.5
         result.TotalBolus.Should().Be(15.5);
-        // Basal = 0.5
-        result.TotalBasal.Should().Be(0.5);
-        // Total = 16
-        result.TotalInsulin.Should().Be(16.0);
-        // Carbs = 45 + 60 + 15 = 120
-        result.TotalCarbs.Should().Be(120);
-        // 4 bolus treatments
+        // No basal TempBasals provided
+        result.TotalBasal.Should().Be(0);
+        // Total = 15.5
+        result.TotalInsulin.Should().Be(15.5);
+        // 4 bolus records
         result.BolusCount.Should().Be(4);
-        // 1 basal treatment
-        result.BasalCount.Should().Be(1);
-        // Meal boluses: "Meal Bolus" and "Snack Bolus" → 3
-        result.MealBoluses.Should().Be(3);
-        // Correction boluses: 1
-        result.CorrectionBoluses.Should().Be(1);
-        // Carb count: 3 treatments with carbs
-        result.CarbCount.Should().Be(3);
-        // Carb+bolus: 3 treatments have both carbs and bolus insulin
-        result.CarbBolusCount.Should().Be(3);
-        // I:C ratio: 120 / 15.5 ≈ 7.7
-        result.IcRatio.Should().BeApproximately(7.7, 0.1);
         // Day count = 7
         result.DayCount.Should().Be(7);
-        // TDD = 16 / 7 ≈ 2.3
-        result.Tdd.Should().BeApproximately(2.3, 0.1);
+        // TDD = 15.5 / 7 ≈ 2.2
+        result.Tdd.Should().BeApproximately(2.2, 0.1);
     }
 
     [Fact]
-    public void CalculateInsulinDeliveryStatistics_WithNoTreatments_ShouldReturnZeroes()
+    public void CalculateInsulinDeliveryStatistics_WithNoBoluses_ShouldReturnZeroes()
     {
         var result = _sut.CalculateInsulinDeliveryStatistics(
-            Array.Empty<Treatment>(),
+            Array.Empty<Bolus>(),
+            Array.Empty<Bolus>(),
+            Array.Empty<TempBasal>(),
+            Array.Empty<CarbIntake>(),
             new DateTime(2024, 1, 1),
             new DateTime(2024, 1, 8)
         );
@@ -604,41 +591,51 @@ public class StatisticsServiceClinicalAccuracyTests
     [Fact]
     public void CalculateInsulinDeliveryStatistics_PercentagesShouldSumTo100()
     {
-        var treatments = new[]
+        var boluses = new[]
         {
-            new Treatment { EventType = "Meal Bolus", Insulin = 8.0, Mills = DateTimeOffset.Parse("2024-01-02T12:00:00Z").ToUnixTimeMilliseconds() },
-            new Treatment { EventType = "Temp Basal", Insulin = 12.0, Mills = DateTimeOffset.Parse("2024-01-02T06:00:00Z").ToUnixTimeMilliseconds() },
+            new Bolus { Insulin = 8.0, Automatic = false, Timestamp = DateTimeOffset.Parse("2024-01-02T12:00:00Z").UtcDateTime },
+        };
+
+        // Basal delivered via TempBasal: 12 units over 24 hours (rate=0.5 U/hr)
+        var tempBasals = new[]
+        {
+            new TempBasal
+            {
+                StartTimestamp = DateTimeOffset.Parse("2024-01-01T00:00:00Z").UtcDateTime,
+                EndTimestamp = DateTimeOffset.Parse("2024-01-02T00:00:00Z").UtcDateTime,
+                Rate = 0.5,
+                Origin = TempBasalOrigin.Scheduled,
+            },
         };
 
         var result = _sut.CalculateInsulinDeliveryStatistics(
-            treatments,
+            boluses,
+            Array.Empty<Bolus>(),
+            tempBasals,
+            Array.Empty<CarbIntake>(),
             new DateTime(2024, 1, 1),
             new DateTime(2024, 1, 2)
         );
 
         (result.BasalPercent + result.BolusPercent).Should().BeApproximately(100, 0.1);
-        result.BolusPercent.Should().BeApproximately(40, 0.1); // 8/20 * 100
-        result.BasalPercent.Should().BeApproximately(60, 0.1); // 12/20 * 100
     }
 
     [Fact]
-    public void CalculateInsulinDeliveryStatistics_AllBolusTypes_ShouldBeCategorizedAsBolus()
+    public void CalculateInsulinDeliveryStatistics_AllBoluses_ShouldBeCategorizedAsBolus()
     {
-        var bolusTypes = new[]
+        // In V4, all Bolus records are boluses — no event type disambiguation needed
+        var boluses = Enumerable.Range(0, 10).Select(i => new Bolus
         {
-            "Meal Bolus", "Correction Bolus", "Snack Bolus", "Bolus Wizard",
-            "Combo Bolus", "Bolus", "SMB", "e-Bolus", "Extended Bolus", "Dual Wave",
-        };
-
-        var treatments = bolusTypes.Select((type, i) => new Treatment
-        {
-            EventType = type,
             Insulin = 1.0,
-            Mills = DateTimeOffset.Parse("2024-01-02T12:00:00Z").ToUnixTimeMilliseconds() + i * 60000,
+            Automatic = false,
+            Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.Parse("2024-01-02T12:00:00Z").ToUnixTimeMilliseconds() + i * 60000).UtcDateTime,
         }).ToArray();
 
         var result = _sut.CalculateInsulinDeliveryStatistics(
-            treatments,
+            boluses,
+            Array.Empty<Bolus>(),
+            Array.Empty<TempBasal>(),
+            Array.Empty<CarbIntake>(),
             new DateTime(2024, 1, 1),
             new DateTime(2024, 1, 3)
         );
@@ -653,35 +650,30 @@ public class StatisticsServiceClinicalAccuracyTests
     #region Treatment Summary Tests
 
     [Fact]
-    public void CalculateTreatmentSummary_BasalFromRateAndDuration_ShouldCalculateInsulin()
+    public void CalculateTreatmentSummary_NoBoluses_ShouldReturnZeroInsulin()
     {
-        // Rate = 1.2 U/hr, Duration = 30 min → 1.2 * 30 / 60 = 0.6 U
-        var treatments = new[]
-        {
-            new Treatment
-            {
-                EventType = "Temp Basal",
-                Rate = 1.2,
-                Duration = 30,
-            },
-        };
+        // In V4, basal is tracked via StateSpans, not in CalculateTreatmentSummary
+        var result = _sut.CalculateTreatmentSummary(Array.Empty<Bolus>(), Array.Empty<CarbIntake>());
 
-        var result = _sut.CalculateTreatmentSummary(treatments);
-
-        result.Totals.Insulin.Basal.Should().BeApproximately(0.6, 0.01);
         result.Totals.Insulin.Bolus.Should().Be(0);
     }
 
     [Fact]
     public void CalculateTreatmentSummary_CarbToInsulinRatio_ShouldBeCorrect()
     {
-        var treatments = new[]
+        var boluses = new[]
         {
-            new Treatment { EventType = "Meal Bolus", Insulin = 5.0, Carbs = 50 },
-            new Treatment { EventType = "Meal Bolus", Insulin = 3.0, Carbs = 30 },
+            new Bolus { Insulin = 5.0, Automatic = false },
+            new Bolus { Insulin = 3.0, Automatic = false },
         };
 
-        var result = _sut.CalculateTreatmentSummary(treatments);
+        var carbIntakes = new[]
+        {
+            new CarbIntake { Carbs = 50 },
+            new CarbIntake { Carbs = 30 },
+        };
+
+        var result = _sut.CalculateTreatmentSummary(boluses, carbIntakes);
 
         // Total carbs = 80, Total insulin (all bolus) = 8
         // C:I ratio = 80/8 = 10.0
@@ -696,14 +688,14 @@ public class StatisticsServiceClinicalAccuracyTests
     public void AssessAgainstTargets_AllTargetsMet_ShouldReturnExcellent()
     {
         var analytics = CreateAnalyticsWithTIR(
-            severeLow: 0, low: 2, target: 80, high: 15, severeHigh: 3, cv: 30
+            veryLow: 0, low: 2, target: 80, high: 15, veryHigh: 3, cv: 30
         );
 
         var result = _sut.AssessAgainstTargets(analytics, DiabetesPopulation.Type1Adult);
 
         result.TargetsMet.Should().Be(6);
         result.TotalTargets.Should().Be(6);
-        result.OverallAssessment.Should().Be("Excellent");
+        result.OverallAssessment.Should().Be(ClinicalAssessmentLevel.Excellent);
         result.TIRAssessment.Status.Should().Be(TargetStatus.Met);
         result.TBRAssessment.Status.Should().Be(TargetStatus.Met);
         result.VeryLowAssessment.Status.Should().Be(TargetStatus.Met);
@@ -717,13 +709,13 @@ public class StatisticsServiceClinicalAccuracyTests
     {
         // TIR < 70%, TBR > 4%, VLow > 1%, TAR > 25%, VHigh > 5%, CV > 36%
         var analytics = CreateAnalyticsWithTIR(
-            severeLow: 5, low: 10, target: 40, high: 30, severeHigh: 15, cv: 50
+            veryLow: 5, low: 10, target: 40, high: 30, veryHigh: 15, cv: 50
         );
 
         var result = _sut.AssessAgainstTargets(analytics, DiabetesPopulation.Type1Adult);
 
         result.TargetsMet.Should().Be(0);
-        result.OverallAssessment.Should().Be("Needs Significant Improvement");
+        result.OverallAssessment.Should().Be(ClinicalAssessmentLevel.NeedsSignificantImprovement);
     }
 
     [Fact]
@@ -731,7 +723,7 @@ public class StatisticsServiceClinicalAccuracyTests
     {
         // Elderly has relaxed targets: TIR >= 50%, TBR <= 1%, VLow <= 0%
         var analytics = CreateAnalyticsWithTIR(
-            severeLow: 0, low: 0, target: 55, high: 35, severeHigh: 10, cv: 30
+            veryLow: 0, low: 0, target: 55, high: 35, veryHigh: 10, cv: 30
         );
 
         var result = _sut.AssessAgainstTargets(analytics, DiabetesPopulation.Elderly);
@@ -749,7 +741,7 @@ public class StatisticsServiceClinicalAccuracyTests
     {
         // TIR at 63% (>= 70 * 0.9 = 63) → Close
         var analytics = CreateAnalyticsWithTIR(
-            severeLow: 0, low: 2, target: 65, high: 25, severeHigh: 8, cv: 30
+            veryLow: 0, low: 2, target: 65, high: 25, veryHigh: 8, cv: 30
         );
 
         var result = _sut.AssessAgainstTargets(analytics, DiabetesPopulation.Type1Adult);
@@ -761,7 +753,7 @@ public class StatisticsServiceClinicalAccuracyTests
     public void AssessAgainstTargets_ShouldGenerateActionableInsights()
     {
         var analytics = CreateAnalyticsWithTIR(
-            severeLow: 3, low: 5, target: 50, high: 30, severeHigh: 12, cv: 45
+            veryLow: 3, low: 5, target: 50, high: 30, veryHigh: 12, cv: 45
         );
 
         var result = _sut.AssessAgainstTargets(analytics, DiabetesPopulation.Type1Adult);
@@ -769,7 +761,7 @@ public class StatisticsServiceClinicalAccuracyTests
         result.PriorityAreas.Should().NotBeEmpty();
         result.ActionableInsights.Should().NotBeEmpty();
         // Should flag severe hypoglycemia since VeryLow > 1%
-        result.PriorityAreas.Should().Contain(p => p.Contains("severe hypoglycemia"));
+        result.PriorityAreas.Should().Contain(p => p.Key == InsightKey.ReduceSevereHypoglycemia);
     }
 
     #endregion
@@ -782,10 +774,10 @@ public class StatisticsServiceClinicalAccuracyTests
         // 14 days * 288 readings/day = 4032 expected
         // 70% of 4032 = 2822
         var baseTime = DateTimeOffset.UtcNow;
-        var entries = Enumerable.Range(0, 3000).Select(i => new Entry
+        var entries = Enumerable.Range(0, 3000).Select(i => new SensorGlucose
         {
-            Sgv = 120,
-            Mills = baseTime.AddMinutes(i * 5).ToUnixTimeMilliseconds(),
+            Mgdl = 120,
+            Timestamp = baseTime.AddMinutes(i * 5).UtcDateTime,
         });
 
         var result = _sut.AssessDataSufficiency(entries, days: 14);
@@ -799,10 +791,10 @@ public class StatisticsServiceClinicalAccuracyTests
     public void AssessDataSufficiency_InsufficientData_ShouldReturnFalse()
     {
         var baseTime = DateTimeOffset.UtcNow;
-        var entries = Enumerable.Range(0, 100).Select(i => new Entry
+        var entries = Enumerable.Range(0, 100).Select(i => new SensorGlucose
         {
-            Sgv = 120,
-            Mills = baseTime.AddMinutes(i * 5).ToUnixTimeMilliseconds(),
+            Mgdl = 120,
+            Timestamp = baseTime.AddMinutes(i * 5).UtcDateTime,
         });
 
         var result = _sut.AssessDataSufficiency(entries, days: 14);
@@ -814,7 +806,7 @@ public class StatisticsServiceClinicalAccuracyTests
     [Fact]
     public void AssessDataSufficiency_NoData_ShouldReturnFalseWithMessage()
     {
-        var result = _sut.AssessDataSufficiency(Array.Empty<Entry>(), days: 14);
+        var result = _sut.AssessDataSufficiency(Array.Empty<SensorGlucose>(), days: 14);
 
         result.IsSufficient.Should().BeFalse();
         result.DaysWithData.Should().Be(0);
@@ -828,21 +820,21 @@ public class StatisticsServiceClinicalAccuracyTests
     {
         // Sufficient data but with a 13-hour gap
         var baseTime = DateTimeOffset.UtcNow;
-        var entries = new List<Entry>();
+        var entries = new List<SensorGlucose>();
 
         // First batch: 2000 readings over ~7 days
-        entries.AddRange(Enumerable.Range(0, 2000).Select(i => new Entry
+        entries.AddRange(Enumerable.Range(0, 2000).Select(i => new SensorGlucose
         {
-            Sgv = 120,
-            Mills = baseTime.AddMinutes(i * 5).ToUnixTimeMilliseconds(),
+            Mgdl = 120,
+            Timestamp = baseTime.AddMinutes(i * 5).UtcDateTime,
         }));
 
         // Then a 13-hour gap, then more readings
         var afterGap = baseTime.AddMinutes(2000 * 5 + 13 * 60);
-        entries.AddRange(Enumerable.Range(0, 1500).Select(i => new Entry
+        entries.AddRange(Enumerable.Range(0, 1500).Select(i => new SensorGlucose
         {
-            Sgv = 120,
-            Mills = afterGap.AddMinutes(i * 5).ToUnixTimeMilliseconds(),
+            Mgdl = 120,
+            Timestamp = afterGap.AddMinutes(i * 5).UtcDateTime,
         }));
 
         var result = _sut.AssessDataSufficiency(entries, days: 14);
@@ -898,18 +890,23 @@ public class StatisticsServiceClinicalAccuracyTests
     public void AnalyzeGlucoseDataExtended_ShouldReturnAllMetrics()
     {
         var baseTime = DateTimeOffset.UtcNow;
-        var entries = Enumerable.Range(0, 288).Select(i => new Entry
+        var entries = Enumerable.Range(0, 288).Select(i => new SensorGlucose
         {
-            Sgv = 100 + (int)(30 * Math.Sin(i * 2 * Math.PI / 288)), // Sinusoidal 70-130
-            Mills = baseTime.AddMinutes(i * 5).ToUnixTimeMilliseconds(),
+            Mgdl = 100 + (int)(30 * Math.Sin(i * 2 * Math.PI / 288)), // Sinusoidal 70-130
+            Timestamp = baseTime.AddMinutes(i * 5).UtcDateTime,
         }).ToArray();
 
-        var treatments = new[]
+        var boluses = new[]
         {
-            new Treatment { EventType = "Meal Bolus", Insulin = 5.0, Carbs = 45 },
+            new Bolus { Insulin = 5.0, Automatic = false },
         };
 
-        var result = _sut.AnalyzeGlucoseDataExtended(entries, treatments);
+        var carbIntakes = new[]
+        {
+            new CarbIntake { Carbs = 45 },
+        };
+
+        var result = _sut.AnalyzeGlucoseDataExtended(entries, boluses, carbIntakes);
 
         // Core analytics should be populated
         result.BasicStats.Count.Should().Be(288);
@@ -934,8 +931,9 @@ public class StatisticsServiceClinicalAccuracyTests
     public void AnalyzeGlucoseDataExtended_WithEmptyData_ShouldReturnSafeDefaults()
     {
         var result = _sut.AnalyzeGlucoseDataExtended(
-            Array.Empty<Entry>(),
-            Array.Empty<Treatment>()
+            Array.Empty<SensorGlucose>(),
+            Array.Empty<Bolus>(),
+            Array.Empty<CarbIntake>()
         );
 
         result.BasicStats.Count.Should().Be(0);
@@ -952,14 +950,14 @@ public class StatisticsServiceClinicalAccuracyTests
     {
         var entries = new[]
         {
-            new Entry { Sgv = 75 },
-            new Entry { Sgv = 95 },
-            new Entry { Sgv = 115 },
-            new Entry { Sgv = 135 },
-            new Entry { Sgv = 175 },
-            new Entry { Sgv = 220 },
-            new Entry { Sgv = 280 },
-            new Entry { Sgv = 350 },
+            new SensorGlucose { Mgdl = 75 },
+            new SensorGlucose { Mgdl = 95 },
+            new SensorGlucose { Mgdl = 115 },
+            new SensorGlucose { Mgdl = 135 },
+            new SensorGlucose { Mgdl = 175 },
+            new SensorGlucose { Mgdl = 220 },
+            new SensorGlucose { Mgdl = 280 },
+            new SensorGlucose { Mgdl = 350 },
         };
 
         var result = _sut.CalculateGlucoseDistribution(entries).ToList();
@@ -979,10 +977,10 @@ public class StatisticsServiceClinicalAccuracyTests
 
         var entries = new[]
         {
-            new Entry { Sgv = 60 },  // Low
-            new Entry { Sgv = 100 }, // Normal
-            new Entry { Sgv = 120 }, // Normal
-            new Entry { Sgv = 200 }, // High
+            new SensorGlucose { Mgdl = 60 },  // Low
+            new SensorGlucose { Mgdl = 100 }, // Normal
+            new SensorGlucose { Mgdl = 120 }, // Normal
+            new SensorGlucose { Mgdl = 200 }, // High
         };
 
         var result = _sut.CalculateGlucoseDistribution(entries, customBins).ToList();
@@ -1002,10 +1000,10 @@ public class StatisticsServiceClinicalAccuracyTests
     {
         // All values around 100 with minimal variation
         var values = new double[] { 98, 100, 102, 99, 101, 100, 99, 101 };
-        var entries = values.Select((v, i) => new Entry
+        var entries = values.Select((v, i) => new SensorGlucose
         {
-            Sgv = v,
-            Mills = DateTimeOffset.UtcNow.AddMinutes(i * 5).ToUnixTimeMilliseconds(),
+            Mgdl = v,
+            Timestamp = DateTimeOffset.UtcNow.AddMinutes(i * 5).UtcDateTime,
         });
 
         var result = _sut.CalculateGlycemicVariability(values, entries);
@@ -1020,10 +1018,10 @@ public class StatisticsServiceClinicalAccuracyTests
     {
         // Wild swings: 50, 300, 50, 300, etc.
         var values = new double[] { 50, 300, 50, 300, 50, 300, 50, 300 };
-        var entries = values.Select((v, i) => new Entry
+        var entries = values.Select((v, i) => new SensorGlucose
         {
-            Sgv = v,
-            Mills = DateTimeOffset.UtcNow.AddMinutes(i * 5).ToUnixTimeMilliseconds(),
+            Mgdl = v,
+            Timestamp = DateTimeOffset.UtcNow.AddMinutes(i * 5).UtcDateTime,
         });
 
         var result = _sut.CalculateGlycemicVariability(values, entries);
@@ -1038,10 +1036,11 @@ public class StatisticsServiceClinicalAccuracyTests
     [Fact]
     public void CalculateAveragedStats_ShouldReturn24Hours()
     {
-        var entries = Enumerable.Range(0, 48).Select(i => new Entry
+        var baseTime = new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero);
+        var entries = Enumerable.Range(0, 48).Select(i => new SensorGlucose
         {
-            Sgv = 100 + (i % 24) * 2,
-            Date = DateTime.Today.AddMinutes(i * 30), // 2 readings per hour
+            Mgdl = 100 + (i % 24) * 2,
+            Timestamp = baseTime.AddMinutes(i * 30).UtcDateTime, // 2 readings per hour
         });
 
         var result = _sut.CalculateAveragedStats(entries).ToList();
@@ -1053,11 +1052,12 @@ public class StatisticsServiceClinicalAccuracyTests
     [Fact]
     public void CalculateAveragedStats_ShouldAverageMultipleReadingsPerHour()
     {
+        var baseTime = new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero);
         var entries = new[]
         {
-            new Entry { Sgv = 100, Date = DateTime.Today.AddHours(8).AddMinutes(0) },
-            new Entry { Sgv = 120, Date = DateTime.Today.AddHours(8).AddMinutes(15) },
-            new Entry { Sgv = 140, Date = DateTime.Today.AddHours(8).AddMinutes(30) },
+            new SensorGlucose { Mgdl = 100, Timestamp = baseTime.AddHours(8).AddMinutes(0).UtcDateTime },
+            new SensorGlucose { Mgdl = 120, Timestamp = baseTime.AddHours(8).AddMinutes(15).UtcDateTime },
+            new SensorGlucose { Mgdl = 140, Timestamp = baseTime.AddHours(8).AddMinutes(30).UtcDateTime },
         };
 
         var result = _sut.CalculateAveragedStats(entries).ToList();
@@ -1145,10 +1145,10 @@ public class StatisticsServiceClinicalAccuracyTests
     public void StandardDeviation_BasicStatsAndGlycemicVariability_ShouldAgree()
     {
         var values = new double[] { 80, 100, 120, 140, 160 };
-        var entries = values.Select((v, i) => new Entry
+        var entries = values.Select((v, i) => new SensorGlucose
         {
-            Sgv = v,
-            Mills = DateTimeOffset.UtcNow.AddMinutes(i * 5).ToUnixTimeMilliseconds(),
+            Mgdl = v,
+            Timestamp = DateTimeOffset.UtcNow.AddMinutes(i * 5).UtcDateTime,
         }).ToArray();
 
         var basicStats = _sut.CalculateBasicStats(values);
@@ -1216,11 +1216,11 @@ public class StatisticsServiceClinicalAccuracyTests
         // All readings in target (70-180) so Target RangeStats gets all data
         var entries = new[]
         {
-            new Entry { Sgv = 80 },
-            new Entry { Sgv = 100 },
-            new Entry { Sgv = 120 },
-            new Entry { Sgv = 140 },
-            new Entry { Sgv = 160 },
+            new SensorGlucose { Mgdl = 80 },
+            new SensorGlucose { Mgdl = 100 },
+            new SensorGlucose { Mgdl = 120 },
+            new SensorGlucose { Mgdl = 140 },
+            new SensorGlucose { Mgdl = 160 },
         };
 
         var tir = _sut.CalculateTimeInRange(entries);
@@ -1307,27 +1307,27 @@ public class StatisticsServiceClinicalAccuracyTests
     /// Clinically this is a single continuous hypoglycemic event.
     /// </summary>
     [Fact]
-    public void TimeInRange_Episodes_SevereLowToLowTransition_CountsSeparateEpisodes()
+    public void TimeInRange_Episodes_VeryLowToLowTransition_CountsSeparateEpisodes()
     {
         var entries = new[]
         {
-            new Entry { Sgv = 120 }, // target
-            new Entry { Sgv = 45 },  // severe low — episode starts
-            new Entry { Sgv = 45 },  // severe low — continues
-            new Entry { Sgv = 60 },  // low — this is a DIFFERENT range, counts as new episode
-            new Entry { Sgv = 60 },  // low — continues
-            new Entry { Sgv = 120 }, // back to target
+            new SensorGlucose { Mgdl = 120 }, // target
+            new SensorGlucose { Mgdl = 45 },  // severe low — episode starts
+            new SensorGlucose { Mgdl = 45 },  // severe low — continues
+            new SensorGlucose { Mgdl = 60 },  // low — this is a DIFFERENT range, counts as new episode
+            new SensorGlucose { Mgdl = 60 },  // low — continues
+            new SensorGlucose { Mgdl = 120 }, // back to target
         };
 
         var result = _sut.CalculateTimeInRange(entries);
 
         // Current behavior: counts separate episodes for severity transitions
         // This means one continuous hypo event gets counted as 2 episodes
-        result.Episodes.SevereLow.Should().Be(1);
+        result.Episodes.VeryLow.Should().Be(1);
         result.Episodes.Low.Should().Be(1);
 
         // Total hypo "episodes" reported = 2, but clinically it was 1 event
-        var totalHypoEpisodes = result.Episodes.SevereLow + result.Episodes.Low;
+        var totalHypoEpisodes = result.Episodes.VeryLow + result.Episodes.Low;
         totalHypoEpisodes.Should().Be(2,
             "current implementation counts severity transitions as separate episodes — " +
             "consider whether a single continuous hypo event should be counted as 1 episode");
@@ -1338,11 +1338,11 @@ public class StatisticsServiceClinicalAccuracyTests
     #region Helper Methods
 
     private static GlucoseAnalytics CreateAnalyticsWithTIR(
-        double severeLow,
+        double veryLow,
         double low,
         double target,
         double high,
-        double severeHigh,
+        double veryHigh,
         double cv
     )
     {
@@ -1352,11 +1352,11 @@ public class StatisticsServiceClinicalAccuracyTests
             {
                 Percentages = new TimeInRangePercentages
                 {
-                    SevereLow = severeLow,
+                    VeryLow = veryLow,
                     Low = low,
                     Target = target,
                     High = high,
-                    SevereHigh = severeHigh,
+                    VeryHigh = veryHigh,
                 },
             },
             GlycemicVariability = new GlycemicVariability

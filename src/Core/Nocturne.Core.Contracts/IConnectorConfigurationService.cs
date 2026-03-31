@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Nocturne.Core.Models.Configuration;
 
 namespace Nocturne.Core.Contracts;
 
@@ -40,6 +41,31 @@ public class ConnectorConfigurationResponse
     /// Who last modified the configuration.
     /// </summary>
     public string? ModifiedBy { get; set; }
+
+    /// <summary>
+    /// When the connector last attempted to sync.
+    /// </summary>
+    public DateTime? LastSyncAttempt { get; set; }
+
+    /// <summary>
+    /// When the connector last successfully completed a sync.
+    /// </summary>
+    public DateTime? LastSuccessfulSync { get; set; }
+
+    /// <summary>
+    /// The error message from the most recent failure.
+    /// </summary>
+    public string? LastErrorMessage { get; set; }
+
+    /// <summary>
+    /// When the error occurred.
+    /// </summary>
+    public DateTime? LastErrorAt { get; set; }
+
+    /// <summary>
+    /// Current health status.
+    /// </summary>
+    public bool IsHealthy { get; set; } = true;
 }
 
 /// <summary>
@@ -160,6 +186,38 @@ public interface IConnectorConfigurationService
     /// <param name="ct">Cancellation token</param>
     /// <returns>Dictionary of property names to effective values, or null if connector is not reachable</returns>
     Task<Dictionary<string, object?>?> GetEffectiveConfigurationAsync(string connectorName, CancellationToken ct = default);
+
+    /// <summary>
+    /// Gets the health state for a connector
+    /// </summary>
+    /// <param name="connectorName">The name of the connector</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>The health state, or null if the connector is not found</returns>
+    Task<ConnectorHealthStateDto?> GetHealthStateAsync(
+        string connectorName,
+        CancellationToken ct = default
+    );
+
+    /// <summary>
+    /// Updates the health state for a connector
+    /// </summary>
+    /// <param name="connectorName">The name of the connector</param>
+    /// <param name="lastSyncAttempt">When the connector last attempted to sync</param>
+    /// <param name="lastSuccessfulSync">When the connector last successfully completed a sync</param>
+    /// <param name="lastErrorMessage">The error message from the most recent failure</param>
+    /// <param name="lastErrorAt">When the error occurred</param>
+    /// <param name="isHealthy">Current health status</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>A task representing the async operation</returns>
+    Task UpdateHealthStateAsync(
+        string connectorName,
+        DateTime? lastSyncAttempt = null,
+        DateTime? lastSuccessfulSync = null,
+        string? lastErrorMessage = null,
+        DateTime? lastErrorAt = null,
+        bool? isHealthy = null,
+        CancellationToken ct = default
+    );
 }
 
 /// <summary>

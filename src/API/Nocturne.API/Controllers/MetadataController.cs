@@ -1,6 +1,11 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+using OpenApi.Remote.Attributes;
+using Nocturne.API.Multitenancy;
+using Nocturne.Connectors.Core.Extensions;
 using Nocturne.Core.Constants;
+using Nocturne.Core.Contracts.Multitenancy;
 using Nocturne.Core.Models;
 using Nocturne.Core.Models.Configuration;
 
@@ -11,6 +16,7 @@ namespace Nocturne.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
+[Tags("Metadata")]
 public class MetadataController : ControllerBase
 {
     /// <summary>
@@ -19,6 +25,7 @@ public class MetadataController : ControllerBase
     /// </summary>
     /// <returns>WebSocket events metadata</returns>
     [HttpGet("websocket-events")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(WebSocketEventsMetadata), 200)]
     public ActionResult<WebSocketEventsMetadata> GetWebSocketEvents()
     {
@@ -37,6 +44,7 @@ public class MetadataController : ControllerBase
     /// </summary>
     /// <returns>External URLs configuration</returns>
     [HttpGet("external-urls")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(ExternalUrls), 200)]
     public ActionResult<ExternalUrls> GetExternalUrls()
     {
@@ -62,6 +70,7 @@ public class MetadataController : ControllerBase
     /// </summary>
     /// <returns>Treatment event types metadata</returns>
     [HttpGet("treatment-event-types")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(TreatmentEventTypesMetadata), 200)]
     public ActionResult<TreatmentEventTypesMetadata> GetTreatmentEventTypes()
     {
@@ -81,6 +90,7 @@ public class MetadataController : ControllerBase
     /// </summary>
     /// <returns>State span types metadata</returns>
     [HttpGet("state-span-types")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(StateSpanTypesMetadata), 200)]
     public ActionResult<StateSpanTypesMetadata> GetStateSpanTypes()
     {
@@ -88,7 +98,6 @@ public class MetadataController : ControllerBase
             new StateSpanTypesMetadata
             {
                 AvailableCategories = Enum.GetValues<StateSpanCategory>(),
-                BasalDeliveryStates = Enum.GetValues<BasalDeliveryState>(),
                 BasalDeliveryOrigins = Enum.GetValues<BasalDeliveryOrigin>(),
                 PumpModeStates = Enum.GetValues<PumpModeState>(),
                 PumpConnectivityStates = Enum.GetValues<PumpConnectivityState>(),
@@ -103,6 +112,7 @@ public class MetadataController : ControllerBase
     /// </summary>
     /// <returns>Statistics types metadata</returns>
     [HttpGet("statistics-types")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(StatisticsTypesMetadata), 200)]
     public ActionResult<StatisticsTypesMetadata> GetStatisticsTypes()
     {
@@ -115,11 +125,31 @@ public class MetadataController : ControllerBase
     }
 
     /// <summary>
+    /// Get connector property keys metadata
+    /// This endpoint exposes all available connector property keys for type-safe usage in frontend clients
+    /// </summary>
+    /// <returns>Connector property keys metadata</returns>
+    [HttpGet("connector-property-keys")]
+    [RemoteQuery]
+    [ProducesResponseType(typeof(ConnectorPropertyKeysMetadata), 200)]
+    public ActionResult<ConnectorPropertyKeysMetadata> GetConnectorPropertyKeys()
+    {
+        return Ok(
+            new ConnectorPropertyKeysMetadata
+            {
+                AvailableKeys = Enum.GetValues<ConnectorPropertyKey>(),
+                Description = "Available connector configuration property keys",
+            }
+        );
+    }
+
+    /// <summary>
     /// Get widget definitions metadata
     /// This endpoint provides all available dashboard widget definitions for frontend configuration
     /// </summary>
     /// <returns>Widget definitions metadata</returns>
     [HttpGet("widget-definitions")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(WidgetDefinitionsMetadata), 200)]
     public ActionResult<WidgetDefinitionsMetadata> GetWidgetDefinitions()
     {
@@ -133,6 +163,31 @@ public class MetadataController : ControllerBase
                 Description = "Available dashboard widget definitions for configuration",
             }
         );
+    }
+
+    /// <summary>
+    /// Get multitenancy configuration for the frontend
+    /// Provides details needed for tenant switching and display
+    /// </summary>
+    [HttpGet("multitenancy")]
+    [RemoteQuery]
+    [ProducesResponseType(typeof(MultitenancyInfo), 200)]
+    public ActionResult<MultitenancyInfo> GetMultitenancyInfo(
+        [FromServices] IOptions<MultitenancyConfiguration> config,
+        [FromServices] ITenantAccessor tenantAccessor)
+    {
+        var tenantContext = tenantAccessor.Context;
+
+        return Ok(new MultitenancyInfo
+        {
+            BaseDomain = config.Value.BaseDomain,
+            DefaultTenantSlug = config.Value.DefaultTenantSlug,
+            SubdomainResolution = !string.IsNullOrEmpty(config.Value.BaseDomain),
+            AllowSelfServiceCreation = config.Value.AllowSelfServiceCreation,
+            CurrentTenantSlug = tenantContext?.Slug,
+            CurrentTenantId = tenantContext?.TenantId,
+            CurrentTenantDisplayName = tenantContext?.DisplayName,
+        });
     }
 
     private static WidgetDefinition[] GetAllWidgetDefinitions() =>
@@ -381,11 +436,6 @@ public class StateSpanTypesMetadata
     public StateSpanCategory[] AvailableCategories { get; set; } = [];
 
     /// <summary>
-    /// Array of all basal delivery states
-    /// </summary>
-    public BasalDeliveryState[] BasalDeliveryStates { get; set; } = [];
-
-    /// <summary>
     /// Array of all basal delivery origin values
     /// </summary>
     public BasalDeliveryOrigin[] BasalDeliveryOrigins { get; set; } = [];
@@ -442,3 +492,59 @@ public class StatisticsTypesMetadata
     public InsulinDeliveryStatistics? SampleInsulinDelivery { get; set; }
 }
 
+/// <summary>
+/// Metadata about connector property keys for NSwag generation
+/// </summary>
+public class ConnectorPropertyKeysMetadata
+{
+    /// <summary>
+    /// Array of all available connector property keys
+    /// </summary>
+    public ConnectorPropertyKey[] AvailableKeys { get; set; } = [];
+
+    /// <summary>
+    /// Description of the connector property keys
+    /// </summary>
+    public string Description { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Multitenancy configuration exposed to the frontend
+/// </summary>
+public class MultitenancyInfo
+{
+    /// <summary>
+    /// Base domain for subdomain-based tenant resolution (e.g. "nocturnecgm.com")
+    /// </summary>
+    public string? BaseDomain { get; set; }
+
+    /// <summary>
+    /// Slug of the auto-created default tenant
+    /// </summary>
+    public string DefaultTenantSlug { get; set; } = "default";
+
+    /// <summary>
+    /// Whether subdomain-based tenant resolution is active
+    /// </summary>
+    public bool SubdomainResolution { get; set; }
+
+    /// <summary>
+    /// Slug of the tenant resolved for the current request
+    /// </summary>
+    public string? CurrentTenantSlug { get; set; }
+
+    /// <summary>
+    /// ID of the tenant resolved for the current request
+    /// </summary>
+    public Guid? CurrentTenantId { get; set; }
+
+    /// <summary>
+    /// Display name of the tenant resolved for the current request
+    /// </summary>
+    public string? CurrentTenantDisplayName { get; set; }
+
+    /// <summary>
+    /// Whether self-service tenant creation is allowed
+    /// </summary>
+    public bool AllowSelfServiceCreation { get; set; }
+}

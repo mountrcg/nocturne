@@ -5,7 +5,7 @@ using Nocturne.Core.Constants;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models.Services;
 using Nocturne.Infrastructure.Data;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
 
 namespace Nocturne.API.Services;
 
@@ -15,17 +15,20 @@ namespace Nocturne.API.Services;
 public class DataSourceService : IDataSourceService
 {
     private readonly NocturneDbContext _context;
-    private readonly IPostgreSqlService _postgreSqlService;
+    private readonly IEntryRepository _entries;
+    private readonly ITreatmentRepository _treatments;
     private readonly ILogger<DataSourceService> _logger;
 
     public DataSourceService(
         NocturneDbContext context,
-        IPostgreSqlService postgreSqlService,
+        IEntryRepository entries,
+        ITreatmentRepository treatments,
         ILogger<DataSourceService> logger
     )
     {
         _context = context;
-        _postgreSqlService = postgreSqlService;
+        _entries = entries;
+        _treatments = treatments;
         _logger = logger;
     }
 
@@ -487,6 +490,138 @@ public class DataSourceService : IDataSourceService
                     },
                 },
             },
+            new()
+            {
+                Id = "xdrip4ios",
+                Name = "xDrip4iOS",
+                Platform = "ios",
+                Category = "cgm",
+                Description =
+                    "iOS CGM app supporting Dexcom, Libre, and other sensors with Nightscout upload.",
+                Icon = "xdrip4ios",
+                Url = "https://github.com/JohanDegraworksve/xdripswift",
+                SetupInstructions = new List<SetupStep>
+                {
+                    new()
+                    {
+                        Step = 1,
+                        Title = "Open xDrip4iOS Settings",
+                        Description = "Tap the Settings tab in the app.",
+                    },
+                    new()
+                    {
+                        Step = 2,
+                        Title = "Nightscout Upload",
+                        Description = "Navigate to Nightscout → Upload.",
+                    },
+                    new()
+                    {
+                        Step = 3,
+                        Title = "Configure URL",
+                        Description = "Enter your Nocturne URL.",
+                    },
+                    new()
+                    {
+                        Step = 4,
+                        Title = "API Secret",
+                        Description = "Enter your API secret.",
+                    },
+                    new()
+                    {
+                        Step = 5,
+                        Title = "Enable Upload",
+                        Description = "Toggle on 'Upload to Nightscout'.",
+                    },
+                },
+            },
+            new()
+            {
+                Id = "juggluco",
+                Name = "Juggluco",
+                Platform = "android",
+                Category = "cgm",
+                Description =
+                    "Android app for FreeStyle Libre sensors with Nightscout upload support.",
+                Icon = "juggluco",
+                Url = "https://juggluco.nl",
+                SetupInstructions = new List<SetupStep>
+                {
+                    new()
+                    {
+                        Step = 1,
+                        Title = "Open Juggluco Settings",
+                        Description = "Tap the hamburger menu and select Settings.",
+                    },
+                    new()
+                    {
+                        Step = 2,
+                        Title = "Nightscout Connection",
+                        Description = "Navigate to the Nightscout section.",
+                    },
+                    new()
+                    {
+                        Step = 3,
+                        Title = "Configure URL",
+                        Description = "Enter your Nocturne URL.",
+                    },
+                    new()
+                    {
+                        Step = 4,
+                        Title = "API Secret",
+                        Description = "Enter your API secret.",
+                    },
+                    new()
+                    {
+                        Step = 5,
+                        Title = "Enable Sync",
+                        Description = "Toggle on Nightscout synchronisation.",
+                    },
+                },
+            },
+            new()
+            {
+                Id = "glucotracker",
+                Name = "GlucoTracker",
+                Platform = "android",
+                Category = "cgm",
+                Description =
+                    "Android glucose tracking app with Nightscout upload capability.",
+                Icon = "glucotracker",
+                Url = "https://glucotracker.app",
+                SetupInstructions = new List<SetupStep>
+                {
+                    new()
+                    {
+                        Step = 1,
+                        Title = "Open GlucoTracker Settings",
+                        Description = "Go to Settings in the app.",
+                    },
+                    new()
+                    {
+                        Step = 2,
+                        Title = "Cloud Sync",
+                        Description = "Navigate to Cloud Sync → Nightscout.",
+                    },
+                    new()
+                    {
+                        Step = 3,
+                        Title = "Configure URL",
+                        Description = "Enter your Nocturne URL.",
+                    },
+                    new()
+                    {
+                        Step = 4,
+                        Title = "API Secret",
+                        Description = "Enter your API secret.",
+                    },
+                    new()
+                    {
+                        Step = 5,
+                        Title = "Enable Upload",
+                        Description = "Toggle on 'Upload to Nightscout'.",
+                    },
+                },
+            },
         };
     }
 
@@ -527,13 +662,37 @@ public class DataSourceService : IDataSourceService
         var lowerDevice = deviceId.ToLowerInvariant();
 
         // Detect source type and category
-        if (lowerDevice.Contains("xdrip") || lowerDevice.StartsWith("xdrip"))
+        if (lowerDevice.Contains("xdrip4ios") || lowerDevice.Contains("xdripswift"))
+        {
+            info.Name = "xDrip4iOS";
+            info.SourceType = "xdrip4ios";
+            info.Category = "cgm";
+            info.Icon = "xdrip4ios";
+            info.Description = ExtractDeviceDescription(deviceId, "xDrip4iOS on");
+        }
+        else if (lowerDevice.Contains("xdrip") || lowerDevice.StartsWith("xdrip"))
         {
             info.Name = "xDrip+";
             info.SourceType = "xdrip";
             info.Category = "cgm";
             info.Icon = "xdrip";
             info.Description = ExtractDeviceDescription(deviceId, "xDrip+ on");
+        }
+        else if (lowerDevice.Contains("juggluco"))
+        {
+            info.Name = "Juggluco";
+            info.SourceType = "juggluco";
+            info.Category = "cgm";
+            info.Icon = "juggluco";
+            info.Description = ExtractDeviceDescription(deviceId, "Juggluco on");
+        }
+        else if (lowerDevice.Contains("glucotracker"))
+        {
+            info.Name = "GlucoTracker";
+            info.SourceType = "glucotracker";
+            info.Category = "cgm";
+            info.Icon = "glucotracker";
+            info.Description = ExtractDeviceDescription(deviceId, "GlucoTracker on");
         }
         else if (lowerDevice.Contains("spike"))
         {
@@ -670,35 +829,72 @@ public class DataSourceService : IDataSourceService
         var metadata = ConnectorMetadataService.GetByConnectorId(connectorId);
         if (metadata == null)
         {
-            return new ConnectorDataSummary
-            {
-                ConnectorId = connectorId,
-                Entries = 0,
-                Treatments = 0,
-                DeviceStatuses = 0,
-            };
+            return new ConnectorDataSummary { ConnectorId = connectorId };
         }
 
         var deviceId = metadata.DataSourceId;
+        var counts = new Dictionary<string, long>();
 
-        var entriesCount = await _context
+        // V4 tables mapped to SyncDataType keys
+        var sensorGlucoseCount = await _context
+            .SensorGlucose.Where(sg => sg.DataSource == deviceId)
+            .LongCountAsync(cancellationToken);
+        var legacyEntriesCount = await _context
             .Entries.Where(e => e.DataSource == deviceId)
             .LongCountAsync(cancellationToken);
+        var glucoseTotal = sensorGlucoseCount + legacyEntriesCount;
+        if (glucoseTotal > 0) counts["Glucose"] = glucoseTotal;
 
-        var treatmentsCount = await _context
-            .Treatments.Where(t => t.DataSource == deviceId)
+        var meterGlucoseCount = await _context
+            .MeterGlucose.Where(mg => mg.DataSource == deviceId)
             .LongCountAsync(cancellationToken);
+        if (meterGlucoseCount > 0) counts["ManualBG"] = meterGlucoseCount;
+
+        var bolusCount = await _context
+            .Boluses.Where(b => b.DataSource == deviceId)
+            .LongCountAsync(cancellationToken);
+        if (bolusCount > 0) counts["Boluses"] = bolusCount;
+
+        var carbIntakeCount = await _context
+            .CarbIntakes.Where(c => c.DataSource == deviceId)
+            .LongCountAsync(cancellationToken);
+        if (carbIntakeCount > 0) counts["CarbIntake"] = carbIntakeCount;
+
+        var bolusCalcCount = await _context
+            .BolusCalculations.Where(bc => bc.DataSource == deviceId)
+            .LongCountAsync(cancellationToken);
+        if (bolusCalcCount > 0) counts["BolusCalculations"] = bolusCalcCount;
+
+        var notesCount = await _context
+            .Notes.Where(n => n.DataSource == deviceId)
+            .LongCountAsync(cancellationToken);
+        if (notesCount > 0) counts["Notes"] = notesCount;
+
+        var deviceEventsCount = await _context
+            .DeviceEvents.Where(de => de.DataSource == deviceId)
+            .LongCountAsync(cancellationToken);
+        if (deviceEventsCount > 0) counts["DeviceEvents"] = deviceEventsCount;
+
+        var stateSpansCount = await _context
+            .StateSpans.Where(s => s.Source == deviceId)
+            .LongCountAsync(cancellationToken);
+        if (stateSpansCount > 0) counts["StateSpans"] = stateSpansCount;
 
         var deviceStatusCount = await _context
             .DeviceStatuses.Where(ds => ds.Device == deviceId)
             .LongCountAsync(cancellationToken);
+        if (deviceStatusCount > 0) counts["DeviceStatus"] = deviceStatusCount;
+
+        // Legacy treatments that haven't been migrated to V4 tables
+        var legacyTreatmentsCount = await _context
+            .Treatments.Where(t => t.DataSource == deviceId)
+            .LongCountAsync(cancellationToken);
+        if (legacyTreatmentsCount > 0) counts["Treatments"] = legacyTreatmentsCount;
 
         return new ConnectorDataSummary
         {
             ConnectorId = connectorId,
-            Entries = entriesCount,
-            Treatments = treatmentsCount,
-            DeviceStatuses = deviceStatusCount,
+            RecordCounts = counts,
         };
     }
 
@@ -733,37 +929,78 @@ public class DataSourceService : IDataSourceService
                 deviceId
             );
 
-            // Delete using the connector's data source ID
-            // This avoids the 30-day lookback window limitation in GetActiveDataSourcesAsync
-            // Use DataSource field which is what connectors use to identify their data
-            var entriesDeleted = await _context
+            // Delete from both legacy and V4 tables
+            // Data may exist in either or both depending on the import pathway
+            var legacyEntriesDeleted = await _context
                 .Entries.Where(e => e.DataSource == deviceId)
                 .ExecuteDeleteAsync(cancellationToken);
+            var sensorGlucoseDeleted = await _context
+                .SensorGlucose.Where(sg => sg.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var meterGlucoseDeleted = await _context
+                .MeterGlucose.Where(mg => mg.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var calibrationsDeleted = await _context
+                .Calibrations.Where(c => c.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
 
-            var treatmentsDeleted = await _context
+            var legacyTreatmentsDeleted = await _context
                 .Treatments.Where(t => t.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var bolusesDeleted = await _context
+                .Boluses.Where(b => b.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var carbIntakesDeleted = await _context
+                .CarbIntakes.Where(c => c.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var bgChecksDeleted = await _context
+                .BGChecks.Where(b => b.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var notesDeleted = await _context
+                .Notes.Where(n => n.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var deviceEventsDeleted = await _context
+                .DeviceEvents.Where(de => de.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var bolusCalcsDeleted = await _context
+                .BolusCalculations.Where(bc => bc.DataSource == deviceId)
                 .ExecuteDeleteAsync(cancellationToken);
 
             var deviceStatusDeleted = await _context
                 .DeviceStatuses.Where(ds => ds.Device == deviceId)
                 .ExecuteDeleteAsync(cancellationToken);
 
+            var stateSpansDeleted = await _context
+                .StateSpans.Where(s => s.Source == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+
+            // Build per-type deletion counts
+            var deletedCounts = new Dictionary<string, long>();
+            var glucoseDeleted = (long)legacyEntriesDeleted + sensorGlucoseDeleted + calibrationsDeleted;
+            if (glucoseDeleted > 0) deletedCounts["Glucose"] = glucoseDeleted;
+            if (meterGlucoseDeleted > 0) deletedCounts["ManualBG"] = meterGlucoseDeleted;
+            if (bolusesDeleted > 0) deletedCounts["Boluses"] = bolusesDeleted;
+            if (carbIntakesDeleted > 0) deletedCounts["CarbIntake"] = carbIntakesDeleted;
+            if (bolusCalcsDeleted > 0) deletedCounts["BolusCalculations"] = bolusCalcsDeleted;
+            if (bgChecksDeleted > 0) deletedCounts["ManualBG"] = deletedCounts.GetValueOrDefault("ManualBG") + bgChecksDeleted;
+            if (notesDeleted > 0) deletedCounts["Notes"] = notesDeleted;
+            if (deviceEventsDeleted > 0) deletedCounts["DeviceEvents"] = deviceEventsDeleted;
+            if (legacyTreatmentsDeleted > 0) deletedCounts["Treatments"] = legacyTreatmentsDeleted;
+            if (deviceStatusDeleted > 0) deletedCounts["DeviceStatus"] = deviceStatusDeleted;
+            if (stateSpansDeleted > 0) deletedCounts["StateSpans"] = stateSpansDeleted;
+
             _logger.LogInformation(
-                "Deleted data for connector {ConnectorId} (device {DeviceId}): {EntriesDeleted} entries, {TreatmentsDeleted} treatments, {DeviceStatusDeleted} device status records",
+                "Deleted data for connector {ConnectorId} (device {DeviceId}): {DeletedCounts}",
                 connectorId,
                 deviceId,
-                entriesDeleted,
-                treatmentsDeleted,
-                deviceStatusDeleted
+                string.Join(", ", deletedCounts.Select(kv => $"{kv.Value} {kv.Key}"))
             );
 
             return new DataSourceDeleteResult
             {
                 Success = true,
                 DataSource = deviceId,
-                EntriesDeleted = entriesDeleted,
-                TreatmentsDeleted = treatmentsDeleted,
-                DeviceStatusDeleted = deviceStatusDeleted,
+                DeletedCounts = deletedCounts,
             };
         }
         catch (Exception ex)
@@ -833,17 +1070,49 @@ public class DataSourceService : IDataSourceService
                 };
             }
 
-            // Determine the filter to use - prefer device ID for entries
+            // The deviceId is the raw Device field value from entries (e.g. "dexcom-connector",
+            // "xDrip-DexcomG6 Samsung Galaxy S21"). For connectors this also matches DataSource.
+            // For uploaders, Device is set by the client app and DataSource may differ.
+            // We match on both Device and DataSource to cover both cases.
             var deviceId = source.DeviceId;
 
-            // Delete entries by device
+            // Delete legacy entries matching Device OR DataSource
             var entriesDeleted = await _context
-                .Entries.Where(e => e.Device == deviceId)
+                .Entries.Where(e => e.Device == deviceId || e.DataSource == deviceId)
                 .ExecuteDeleteAsync(cancellationToken);
 
-            // Delete treatments by device (enteredBy field)
+            // Delete legacy treatments matching EnteredBy (uploaders) OR DataSource (connectors)
             var treatmentsDeleted = await _context
-                .Treatments.Where(t => t.EnteredBy == deviceId)
+                .Treatments.Where(t => t.EnteredBy == deviceId || t.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+
+            // Delete V4 tables by DataSource
+            var sensorGlucoseDeleted = await _context
+                .SensorGlucose.Where(sg => sg.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var meterGlucoseDeleted = await _context
+                .MeterGlucose.Where(mg => mg.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var calibrationsDeleted = await _context
+                .Calibrations.Where(c => c.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var bolusesDeleted = await _context
+                .Boluses.Where(b => b.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var carbIntakesDeleted = await _context
+                .CarbIntakes.Where(c => c.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var bgChecksDeleted = await _context
+                .BGChecks.Where(b => b.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var notesDeleted = await _context
+                .Notes.Where(n => n.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var deviceEventsDeleted = await _context
+                .DeviceEvents.Where(de => de.DataSource == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var bolusCalcsDeleted = await _context
+                .BolusCalculations.Where(bc => bc.DataSource == deviceId)
                 .ExecuteDeleteAsync(cancellationToken);
 
             // Delete device status by device
@@ -851,21 +1120,35 @@ public class DataSourceService : IDataSourceService
                 .DeviceStatuses.Where(ds => ds.Device == deviceId)
                 .ExecuteDeleteAsync(cancellationToken);
 
+            var stateSpansDeleted = await _context
+                .StateSpans.Where(s => s.Source == deviceId)
+                .ExecuteDeleteAsync(cancellationToken);
+
+            var deletedCounts = new Dictionary<string, long>();
+            var glucoseDeleted = (long)entriesDeleted + sensorGlucoseDeleted + calibrationsDeleted;
+            if (glucoseDeleted > 0) deletedCounts["Glucose"] = glucoseDeleted;
+            if (meterGlucoseDeleted > 0) deletedCounts["ManualBG"] = meterGlucoseDeleted;
+            if (treatmentsDeleted > 0) deletedCounts["Treatments"] = treatmentsDeleted;
+            if (bolusesDeleted > 0) deletedCounts["Boluses"] = bolusesDeleted;
+            if (carbIntakesDeleted > 0) deletedCounts["CarbIntake"] = carbIntakesDeleted;
+            if (bgChecksDeleted > 0) deletedCounts["ManualBG"] = deletedCounts.GetValueOrDefault("ManualBG") + bgChecksDeleted;
+            if (notesDeleted > 0) deletedCounts["Notes"] = notesDeleted;
+            if (deviceEventsDeleted > 0) deletedCounts["DeviceEvents"] = deviceEventsDeleted;
+            if (bolusCalcsDeleted > 0) deletedCounts["BolusCalculations"] = bolusCalcsDeleted;
+            if (deviceStatusDeleted > 0) deletedCounts["DeviceStatus"] = deviceStatusDeleted;
+            if (stateSpansDeleted > 0) deletedCounts["StateSpans"] = stateSpansDeleted;
+
             _logger.LogInformation(
-                "Deleted data for {DeviceId}: {EntriesDeleted} entries, {TreatmentsDeleted} treatments, {DeviceStatusDeleted} device status records",
+                "Deleted data for {DeviceId}: {DeletedCounts}",
                 deviceId,
-                entriesDeleted,
-                treatmentsDeleted,
-                deviceStatusDeleted
+                string.Join(", ", deletedCounts.Select(kv => $"{kv.Value} {kv.Key}"))
             );
 
             return new DataSourceDeleteResult
             {
                 Success = true,
                 DataSource = deviceId,
-                EntriesDeleted = entriesDeleted,
-                TreatmentsDeleted = treatmentsDeleted,
-                DeviceStatusDeleted = deviceStatusDeleted,
+                DeletedCounts = deletedCounts,
             };
         }
         catch (Exception ex)
@@ -894,13 +1177,13 @@ public class DataSourceService : IDataSourceService
         try
         {
             // Delete entries by data source
-            var entriesDeleted = await _postgreSqlService.DeleteEntriesByDataSourceAsync(
+            var entriesDeleted = await _entries.DeleteEntriesByDataSourceAsync(
                 DataSources.DemoService,
                 cancellationToken
             );
 
             // Delete treatments by data source
-            var treatmentsDeleted = await _postgreSqlService.DeleteTreatmentsByDataSourceAsync(
+            var treatmentsDeleted = await _treatments.DeleteTreatmentsByDataSourceAsync(
                 DataSources.DemoService,
                 cancellationToken
             );
@@ -910,20 +1193,21 @@ public class DataSourceService : IDataSourceService
                 .DeviceStatuses.Where(ds => ds.Device == DataSources.DemoService)
                 .ExecuteDeleteAsync(cancellationToken);
 
+            var deletedCounts = new Dictionary<string, long>();
+            if (entriesDeleted > 0) deletedCounts["Entries"] = entriesDeleted;
+            if (treatmentsDeleted > 0) deletedCounts["Treatments"] = treatmentsDeleted;
+            if (deviceStatusDeleted > 0) deletedCounts["DeviceStatus"] = deviceStatusDeleted;
+
             _logger.LogInformation(
-                "Deleted demo data: {EntriesDeleted} entries, {TreatmentsDeleted} treatments, {DeviceStatusDeleted} device status records",
-                entriesDeleted,
-                treatmentsDeleted,
-                deviceStatusDeleted
+                "Deleted demo data: {DeletedCounts}",
+                string.Join(", ", deletedCounts.Select(kv => $"{kv.Value} {kv.Key}"))
             );
 
             return new DataSourceDeleteResult
             {
                 Success = true,
                 DataSource = DataSources.DemoService,
-                EntriesDeleted = entriesDeleted,
-                TreatmentsDeleted = treatmentsDeleted,
-                DeviceStatusDeleted = deviceStatusDeleted,
+                DeletedCounts = deletedCounts,
             };
         }
         catch (Exception ex)

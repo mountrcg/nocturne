@@ -1,5 +1,6 @@
 using Nocturne.API.Controllers.V4;
-using Nocturne.Infrastructure.Data.Abstractions;
+using Nocturne.Core.Contracts.Repositories;
+using Nocturne.Core.Contracts.V4.Repositories;
 using Nocturne.Core.Oref;
 using OrefModels = Nocturne.Core.Oref.Models;
 
@@ -11,14 +12,23 @@ namespace Nocturne.API.Services;
 /// </summary>
 public class PredictionService : IPredictionService
 {
-    private readonly IPostgreSqlService _postgresService;
+    private readonly IEntryRepository _entries;
+    private readonly ITreatmentRepository _treatments;
+    private readonly IProfileRepository _profiles;
+    private readonly IPatientInsulinRepository _insulins;
     private readonly ILogger<PredictionService> _logger;
 
     public PredictionService(
-        IPostgreSqlService postgresService,
+        IEntryRepository entries,
+        ITreatmentRepository treatments,
+        IProfileRepository profiles,
+        IPatientInsulinRepository insulins,
         ILogger<PredictionService> logger)
     {
-        _postgresService = postgresService;
+        _entries = entries;
+        _treatments = treatments;
+        _profiles = profiles;
+        _insulins = insulins;
         _logger = logger;
     }
 
@@ -41,7 +51,7 @@ public class PredictionService : IPredictionService
         }
 
         // Fetch recent glucose readings (last 10 entries for delta calculation)
-        var glucoseEntries = await _postgresService.GetEntriesAsync(
+        var glucoseEntries = await _entries.GetEntriesAsync(
             type: "sgv",
             count: 10,
             skip: 0,
@@ -80,7 +90,7 @@ public class PredictionService : IPredictionService
         }
 
         // Fetch recent treatments (last 100 for IOB calculation)
-        var treatments = await _postgresService.GetTreatmentsAsync(
+        var treatments = await _treatments.GetTreatmentsAsync(
             count: 100,
             skip: 0,
             cancellationToken);
@@ -159,10 +169,16 @@ public class PredictionService : IPredictionService
     /// </summary>
     private async Task<OrefModels.OrefProfile> GetProfileAsync(string? profileId, CancellationToken cancellationToken)
     {
+        // Resolve insulin pharmacokinetics from active bolus insulin
+        var bolusInsulin = await ResolveBolusInsulinAsync();
+        var dia = bolusInsulin?.Dia ?? 3.0;
+        var peak = bolusInsulin?.Peak;
+        var curve = bolusInsulin?.Curve;
+
         // Try to fetch profile from database
         try
         {
-            var profiles = await _postgresService.GetProfilesAsync(1, 0, cancellationToken);
+            var profiles = await _profiles.GetProfilesAsync(1, 0, cancellationToken);
             var dbProfile = profiles.FirstOrDefault();
 
             if (dbProfile?.Store != null && dbProfile.Store.Count > 0)
@@ -170,9 +186,12 @@ public class PredictionService : IPredictionService
                 var activeStore = dbProfile.Store.Values.FirstOrDefault();
                 if (activeStore != null)
                 {
-                    return new OrefModels.OrefProfile
+                    // Use insulin-derived DIA unless profile is externally managed
+                    var profileDia = dbProfile.IsExternallyManaged ? activeStore.Dia : dia;
+
+                    var orefProfile = new OrefModels.OrefProfile
                     {
-                        Dia = activeStore.Dia,
+                        Dia = profileDia,
                         CurrentBasal = activeStore.Basal?.FirstOrDefault()?.Value ?? 1.0,
                         Sens = activeStore.Sens?.FirstOrDefault()?.Value ?? 50.0,
                         CarbRatio = activeStore.CarbRatio?.FirstOrDefault()?.Value ?? 10.0,
@@ -182,6 +201,11 @@ public class PredictionService : IPredictionService
                         MaxBasal = 4.0,
                         MaxDailyBasal = 2.0
                     };
+
+                    if (curve != null) orefProfile.Curve = curve;
+                    if (peak.HasValue) orefProfile.Peak = peak.Value;
+
+                    return orefProfile;
                 }
             }
         }
@@ -193,7 +217,7 @@ public class PredictionService : IPredictionService
         // Return default profile
         return new OrefModels.OrefProfile
         {
-            Dia = 3.0,
+            Dia = dia,
             CurrentBasal = 1.0,
             Sens = 50.0,
             CarbRatio = 10.0,
@@ -203,6 +227,19 @@ public class PredictionService : IPredictionService
             MaxBasal = 4.0,
             MaxDailyBasal = 2.0
         };
+    }
+
+    private async Task<Core.Models.V4.PatientInsulin?> ResolveBolusInsulinAsync()
+    {
+        try
+        {
+            return await _insulins.GetPrimaryBolusInsulinAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve primary bolus insulin, falling back to defaults");
+            return null;
+        }
     }
 
     /// <summary>
@@ -215,7 +252,7 @@ public class PredictionService : IPredictionService
         CancellationToken cancellationToken)
     {
         // Get current entry
-        var currentEntry = await _postgresService.GetCurrentEntryAsync(cancellationToken);
+        var currentEntry = await _entries.GetCurrentEntryAsync(cancellationToken);
 
         if (currentEntry?.Sgv == null)
         {

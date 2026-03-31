@@ -10,6 +10,7 @@ using Nocturne.Connectors.Core.Interfaces;
 using Nocturne.Connectors.Core.Models;
 using Nocturne.Connectors.Core.Services;
 using Nocturne.Core.Contracts;
+using Nocturne.Core.Models.Configuration;
 using Nocturne.Infrastructure.Data;
 using Nocturne.Infrastructure.Data.Entities;
 
@@ -32,6 +33,23 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false
     };
+
+    private static readonly Dictionary<string, SyncDataType> SyncPropertyToDataType =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["SyncGlucose"] = SyncDataType.Glucose,
+            ["SyncManualBG"] = SyncDataType.ManualBG,
+            ["SyncBoluses"] = SyncDataType.Boluses,
+            ["SyncCarbIntake"] = SyncDataType.CarbIntake,
+            ["SyncBolusCalculations"] = SyncDataType.BolusCalculations,
+            ["SyncNotes"] = SyncDataType.Notes,
+            ["SyncDeviceEvents"] = SyncDataType.DeviceEvents,
+            ["SyncStateSpans"] = SyncDataType.StateSpans,
+            ["SyncProfiles"] = SyncDataType.Profiles,
+            ["SyncDeviceStatus"] = SyncDataType.DeviceStatus,
+            ["SyncActivity"] = SyncDataType.Activity,
+            ["SyncFood"] = SyncDataType.Food,
+        };
 
     public ConnectorConfigurationService(
         NocturneDbContext context,
@@ -74,7 +92,12 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
             SchemaVersion = entity.SchemaVersion,
             IsActive = isActive,
             LastModified = entity.LastModified,
-            ModifiedBy = entity.ModifiedBy
+            ModifiedBy = entity.ModifiedBy,
+            LastSyncAttempt = entity.LastSyncAttempt,
+            LastSuccessfulSync = entity.LastSuccessfulSync,
+            LastErrorMessage = entity.LastErrorMessage,
+            LastErrorAt = entity.LastErrorAt,
+            IsHealthy = entity.IsHealthy
         };
 
         return response;
@@ -450,7 +473,6 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
 
     /// <summary>
     /// Generates a JSON Schema from a configuration type based on attributes.
-    /// Only includes properties marked with [RuntimeConfigurable].
     /// Includes default values and environment variable names for UI display.
     /// </summary>
     private static JsonDocument GenerateSchemaFromType(Type configType)
@@ -475,6 +497,7 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
         // Get connector registration for environment variable prefix (used by ConnectorPropertyAttribute)
         var registration = configType.GetCustomAttribute<ConnectorRegistrationAttribute>();
         var envPrefix = registration?.EnvironmentPrefix;
+        var supportedDataTypes = registration?.SupportedDataTypes ?? [SyncDataType.Glucose];
 
         foreach (var property in allProps)
         {
@@ -482,7 +505,14 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
             if (connectorPropAttr == null)
                 continue;
 
-            var propName = ToCamelCase(property.Name);
+            // Skip sync toggle properties for data types this connector doesn't support
+            if (SyncPropertyToDataType.TryGetValue(property.Name, out var requiredDataType))
+            {
+                if (!supportedDataTypes.Contains(requiredDataType))
+                    continue;
+            }
+
+            var propName = ToCamelCase(connectorPropAttr.GetKeyName());
 
             // Handle secret fields - include in schema and mark as secret
             if (connectorPropAttr.Secret)
@@ -492,20 +522,12 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
                 var secretSchema = new Dictionary<string, object>
                 {
                     ["type"] = "string",
-                    ["title"] = connectorPropAttr.GetDisplayName()
+                    ["x-secret"] = true
                 };
 
                 if (!string.IsNullOrEmpty(envPrefix))
                 {
-                    var envVarName = connectorPropAttr.GetFullEnvVarName(envPrefix);
-                    secretSchema["x-envVar"] = envVarName;
-                    secretSchema["description"] = connectorPropAttr.Description
-                        ?? $"Configure via environment variable: {envVarName}";
-                }
-                else
-                {
-                    secretSchema["description"] = connectorPropAttr.Description
-                        ?? "Sensitive credential (stored encrypted)";
+                    secretSchema["x-envVar"] = connectorPropAttr.GetFullEnvVarName(envPrefix);
                 }
 
                 if (connectorPropAttr.Required)
@@ -514,11 +536,6 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
                 }
 
                 properties[propName] = secretSchema;
-                continue;
-            }
-
-            if (!connectorPropAttr.RuntimeConfigurable)
-            {
                 continue;
             }
 
@@ -555,7 +572,6 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
         {
             ["$schema"] = "https://json-schema.org/draft/2020-12/schema",
             ["type"] = "object",
-            ["title"] = configType.Name,
             ["properties"] = properties
         };
 
@@ -577,15 +593,24 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
     {
         var result = new Dictionary<string, object?>();
         var configType = config.GetType();
+        var registration = configType.GetCustomAttribute<ConnectorRegistrationAttribute>();
+        var supportedDataTypes = registration?.SupportedDataTypes ?? [SyncDataType.Glucose];
 
         foreach (var property in configType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
             var connectorPropAttr = property.GetCustomAttribute<ConnectorPropertyAttribute>();
-            if (connectorPropAttr is not { RuntimeConfigurable: true })
+            if (connectorPropAttr == null)
                 continue;
 
             if (connectorPropAttr.Secret)
                 continue;
+
+            // Skip sync toggle properties for data types this connector doesn't support
+            if (SyncPropertyToDataType.TryGetValue(property.Name, out var requiredDataType))
+            {
+                if (!supportedDataTypes.Contains(requiredDataType))
+                    continue;
+            }
 
             object? value = null;
             try
@@ -602,7 +627,7 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
                 value = value.ToString();
             }
 
-            result[ToCamelCase(property.Name)] = value;
+            result[ToCamelCase(connectorPropAttr.GetKeyName())] = value;
         }
 
         return result;
@@ -644,21 +669,6 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
         else
         {
             schema["type"] = "string";
-        }
-
-        // Title from ConnectorProperty
-        schema["title"] = connectorAttr.GetDisplayName();
-
-        // Description
-        if (!string.IsNullOrEmpty(connectorAttr.Description))
-        {
-            schema["description"] = connectorAttr.Description;
-        }
-
-        // Category for UI grouping
-        if (!string.IsNullOrEmpty(connectorAttr.Category))
-        {
-            schema["x-category"] = connectorAttr.Category;
         }
 
         // Default value: prefer instance default, fall back to attribute DefaultValue
@@ -736,5 +746,93 @@ public class ConnectorConfigurationService : IConnectorConfigurationService
             return name;
 
         return char.ToLowerInvariant(name[0]) + name.Substring(1);
+    }
+
+    /// <inheritdoc />
+    public async Task<ConnectorHealthStateDto?> GetHealthStateAsync(
+        string connectorName,
+        CancellationToken ct = default
+    )
+    {
+        var config = await _context.ConnectorConfigurations
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.ConnectorName.ToLower() == connectorName.ToLower(), ct);
+
+        if (config == null)
+            return null;
+
+        return new ConnectorHealthStateDto
+        {
+            LastSyncAttempt = config.LastSyncAttempt,
+            LastSuccessfulSync = config.LastSuccessfulSync,
+            LastErrorMessage = config.LastErrorMessage,
+            LastErrorAt = config.LastErrorAt,
+            IsHealthy = config.IsHealthy
+        };
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// To clear error fields, pass special values:
+    /// - Pass string.Empty for lastErrorMessage to clear the error message
+    /// - Pass DateTime.MinValue for lastErrorAt to clear the error timestamp
+    /// </remarks>
+    public async Task UpdateHealthStateAsync(
+        string connectorName,
+        DateTime? lastSyncAttempt = null,
+        DateTime? lastSuccessfulSync = null,
+        string? lastErrorMessage = null,
+        DateTime? lastErrorAt = null,
+        bool? isHealthy = null,
+        CancellationToken ct = default
+    )
+    {
+        var config = await _context.ConnectorConfigurations
+            .FirstOrDefaultAsync(c => c.ConnectorName.ToLower() == connectorName.ToLower(), ct);
+
+        if (config == null)
+        {
+            _logger.LogWarning(
+                "Cannot update health state for connector {ConnectorName}: configuration not found",
+                connectorName
+            );
+            return;
+        }
+
+        // Only update fields that were provided
+        if (lastSyncAttempt.HasValue)
+            config.LastSyncAttempt = lastSyncAttempt.Value;
+
+        if (lastSuccessfulSync.HasValue)
+            config.LastSuccessfulSync = lastSuccessfulSync.Value;
+
+        if (lastErrorMessage != null)
+        {
+            if (lastErrorMessage == string.Empty)
+                config.LastErrorMessage = null; // Explicit clear
+            else
+                config.LastErrorMessage = lastErrorMessage;
+        }
+
+        if (lastErrorAt.HasValue)
+        {
+            if (lastErrorAt.Value == DateTime.MinValue)
+                config.LastErrorAt = null; // Explicit clear
+            else
+                config.LastErrorAt = lastErrorAt.Value;
+        }
+
+        if (isHealthy.HasValue)
+            config.IsHealthy = isHealthy.Value;
+
+        config.SysUpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync(ct);
+
+        _logger.LogDebug(
+            "Updated health state for connector {ConnectorName}: IsHealthy={IsHealthy}",
+            connectorName,
+            config.IsHealthy
+        );
     }
 }

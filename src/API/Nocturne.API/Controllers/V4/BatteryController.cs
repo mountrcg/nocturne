@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using OpenApi.Remote.Attributes;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models.Battery;
 
@@ -28,6 +29,7 @@ public class BatteryController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Current battery status for all devices</returns>
     [HttpGet("current")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(CurrentBatteryStatus), 200)]
     [ProducesResponseType(500)]
     public async Task<ActionResult<CurrentBatteryStatus>> GetCurrentBatteryStatus(
@@ -52,7 +54,7 @@ public class BatteryController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting current battery status");
-            return StatusCode(500, new { error = "Internal server error" });
+            return Problem(detail: "Internal server error", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -65,12 +67,13 @@ public class BatteryController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Battery readings for the specified period</returns>
     [HttpGet("readings")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(IEnumerable<BatteryReading>), 200)]
     [ProducesResponseType(500)]
     public async Task<ActionResult<IEnumerable<BatteryReading>>> GetBatteryReadings(
         [FromQuery] string? device = null,
-        [FromQuery] long? from = null,
-        [FromQuery] long? to = null,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -85,8 +88,8 @@ public class BatteryController : ControllerBase
         {
             var readings = await _batteryService.GetBatteryReadingsAsync(
                 device,
-                from,
-                to,
+                from.HasValue ? new DateTimeOffset(from.Value, TimeSpan.Zero).ToUnixTimeMilliseconds() : null,
+                to.HasValue ? new DateTimeOffset(to.Value, TimeSpan.Zero).ToUnixTimeMilliseconds() : null,
                 cancellationToken
             );
 
@@ -95,7 +98,7 @@ public class BatteryController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting battery readings");
-            return StatusCode(500, new { error = "Internal server error" });
+            return Problem(detail: "Internal server error", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -108,12 +111,13 @@ public class BatteryController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Battery statistics for the specified period</returns>
     [HttpGet("statistics")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(IEnumerable<BatteryStatistics>), 200)]
     [ProducesResponseType(500)]
     public async Task<ActionResult<IEnumerable<BatteryStatistics>>> GetBatteryStatistics(
         [FromQuery] string? device = null,
-        [FromQuery] long? from = null,
-        [FromQuery] long? to = null,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -128,8 +132,8 @@ public class BatteryController : ControllerBase
         {
             var statistics = await _batteryService.GetBatteryStatisticsAsync(
                 device,
-                from,
-                to,
+                from.HasValue ? new DateTimeOffset(from.Value, TimeSpan.Zero).ToUnixTimeMilliseconds() : null,
+                to.HasValue ? new DateTimeOffset(to.Value, TimeSpan.Zero).ToUnixTimeMilliseconds() : null,
                 cancellationToken
             );
 
@@ -138,7 +142,7 @@ public class BatteryController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting battery statistics");
-            return StatusCode(500, new { error = "Internal server error" });
+            return Problem(detail: "Internal server error", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -152,12 +156,13 @@ public class BatteryController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Charge cycles for the specified period</returns>
     [HttpGet("cycles")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(IEnumerable<ChargeCycle>), 200)]
     [ProducesResponseType(500)]
     public async Task<ActionResult<IEnumerable<ChargeCycle>>> GetChargeCycles(
         [FromQuery] string? device = null,
-        [FromQuery] long? from = null,
-        [FromQuery] long? to = null,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null,
         [FromQuery] int limit = 100,
         CancellationToken cancellationToken = default
     )
@@ -174,8 +179,8 @@ public class BatteryController : ControllerBase
         {
             var cycles = await _batteryService.GetChargeCyclesAsync(
                 device,
-                from,
-                to,
+                from.HasValue ? new DateTimeOffset(from.Value, TimeSpan.Zero).ToUnixTimeMilliseconds() : null,
+                to.HasValue ? new DateTimeOffset(to.Value, TimeSpan.Zero).ToUnixTimeMilliseconds() : null,
                 limit,
                 cancellationToken
             );
@@ -185,7 +190,7 @@ public class BatteryController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting charge cycles");
-            return StatusCode(500, new { error = "Internal server error" });
+            return Problem(detail: "Internal server error", statusCode: 500, title: "Internal Server Error");
         }
     }
 
@@ -195,6 +200,7 @@ public class BatteryController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>List of device identifiers</returns>
     [HttpGet("devices")]
+    [RemoteQuery]
     [ProducesResponseType(typeof(IEnumerable<string>), 200)]
     [ProducesResponseType(500)]
     public async Task<ActionResult<IEnumerable<string>>> GetKnownDevices(
@@ -211,7 +217,7 @@ public class BatteryController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting known devices");
-            return StatusCode(500, new { error = "Internal server error" });
+            return Problem(detail: "Internal server error", statusCode: 500, title: "Internal Server Error");
         }
     }
 }

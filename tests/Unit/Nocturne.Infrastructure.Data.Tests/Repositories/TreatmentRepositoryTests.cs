@@ -15,6 +15,7 @@ namespace Nocturne.Infrastructure.Data.Tests.Repositories;
 [Trait("Category", "Treatment")]
 public class TreatmentRepositoryTests : IDisposable
 {
+    private static readonly Guid TestTenantId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private readonly DbConnection _connection;
     private readonly DbContextOptions<NocturneDbContext> _contextOptions;
     private readonly Mock<IDeduplicationService> _mockDeduplicationService;
@@ -35,6 +36,7 @@ public class TreatmentRepositoryTests : IDisposable
 
         // Create the database schema
         using var context = new NocturneDbContext(_contextOptions);
+        context.TenantId = TestTenantId;
         context.Database.EnsureCreated();
 
         // Setup mocks for repository dependencies
@@ -85,7 +87,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -111,7 +114,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -156,7 +160,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -182,7 +187,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -214,7 +220,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -236,7 +243,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -274,7 +282,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -297,7 +306,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -324,7 +334,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -350,7 +361,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -389,7 +401,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -424,7 +437,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -468,7 +482,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -510,7 +525,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -557,7 +573,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -589,7 +606,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -622,7 +640,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -654,7 +673,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -688,7 +708,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -721,7 +742,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -752,7 +774,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -781,7 +804,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -816,7 +840,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -845,7 +870,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -869,7 +895,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -901,7 +928,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -940,7 +968,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -960,7 +989,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -991,7 +1021,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -1033,7 +1064,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -1065,7 +1097,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -1108,7 +1141,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -1160,7 +1194,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -1193,7 +1228,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -1255,7 +1291,8 @@ public class TreatmentRepositoryTests : IDisposable
     {
         // Arrange
         await using var context = new NocturneDbContext(_contextOptions);
-        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser();
+        context.TenantId = TestTenantId;
+        var queryParser = new Nocturne.Infrastructure.Data.Services.QueryParser(Microsoft.Extensions.Logging.Abstractions.NullLogger<Nocturne.Infrastructure.Data.Services.QueryParser>.Instance);
         var repository = new TreatmentRepository(
             context,
             queryParser,
@@ -1306,6 +1343,33 @@ public class TreatmentRepositoryTests : IDisposable
     }
 
     #endregion
+
+    [Fact]
+    public async Task DeleteTreatmentAsync_SoftDeletesRecord()
+    {
+        using var context = new NocturneDbContext(_contextOptions);
+        context.TenantId = TestTenantId;
+        context.TenantId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+        var queryParser = new Mock<IQueryParser>();
+        var repository = CreateRepository(context, queryParser.Object);
+
+        var treatment = new Treatment { Mills = 1000, EventType = "Correction Bolus", Insulin = 2.0 };
+        var created = await repository.CreateTreatmentAsync(treatment);
+
+        var result = await repository.DeleteTreatmentAsync(created!.Id);
+
+        Assert.True(result);
+
+        // Record should be invisible to normal queries
+        var visible = await repository.GetTreatmentByIdAsync(created.Id);
+        Assert.Null(visible);
+
+        // Record should still exist with IgnoreQueryFilters
+        var raw = await context.Treatments.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(t => t.Id == created.DbId);
+        Assert.NotNull(raw);
+        Assert.NotNull(raw!.DeletedAt);
+    }
 
     public void Dispose()
     {

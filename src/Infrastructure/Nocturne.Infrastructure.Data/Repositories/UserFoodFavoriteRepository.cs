@@ -1,12 +1,15 @@
 using Microsoft.EntityFrameworkCore;
+using Nocturne.Core.Contracts.Repositories;
+using Nocturne.Core.Models;
 using Nocturne.Infrastructure.Data.Entities;
+using Nocturne.Infrastructure.Data.Mappers;
 
 namespace Nocturne.Infrastructure.Data.Repositories;
 
 /// <summary>
 /// PostgreSQL repository for user food favorites.
 /// </summary>
-public class UserFoodFavoriteRepository
+public class UserFoodFavoriteRepository : IUserFoodFavoriteRepository
 {
     private readonly NocturneDbContext _context;
 
@@ -22,12 +25,15 @@ public class UserFoodFavoriteRepository
     /// <summary>
     /// Get favorite food entities for a user.
     /// </summary>
-    public async Task<IReadOnlyList<FoodEntity>> GetFavoriteFoodsAsync(
+    /// <param name="userId">The user ID.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A collection of favorite foods.</returns>
+    public async Task<IReadOnlyList<Food>> GetFavoriteFoodsAsync(
         string userId,
         CancellationToken cancellationToken = default
     )
     {
-        return await _context
+        var entities = await _context
             .Set<UserFoodFavoriteEntity>()
             .AsNoTracking()
             .Where(f => f.UserId == userId)
@@ -35,11 +41,17 @@ public class UserFoodFavoriteRepository
             .OrderBy(f => f.Food!.Name)
             .Select(f => f.Food!)
             .ToListAsync(cancellationToken);
+
+        return entities.Select(FoodMapper.ToDomainModel).ToList();
     }
 
     /// <summary>
     /// Check if a food is a favorite for the user.
     /// </summary>
+    /// <param name="userId">The user ID.</param>
+    /// <param name="foodId">The unique identifier of the food.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True if the food is a favorite, otherwise false.</returns>
     public async Task<bool> IsFavoriteAsync(
         string userId,
         Guid foodId,
@@ -55,7 +67,11 @@ public class UserFoodFavoriteRepository
     /// <summary>
     /// Add a favorite entry for a user.
     /// </summary>
-    public async Task<UserFoodFavoriteEntity?> AddFavoriteAsync(
+    /// <param name="userId">The user ID.</param>
+    /// <param name="foodId">The unique identifier of the food to favorite.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The added favorite record, or null if it already exists.</returns>
+    public async Task<UserFoodFavorite?> AddFavoriteAsync(
         string userId,
         Guid foodId,
         CancellationToken cancellationToken = default
@@ -71,12 +87,21 @@ public class UserFoodFavoriteRepository
 
         _context.Set<UserFoodFavoriteEntity>().Add(entity);
         await _context.SaveChangesAsync(cancellationToken);
-        return entity;
+        return new UserFoodFavorite
+        {
+            Id = entity.Id,
+            UserId = entity.UserId,
+            FoodId = entity.FoodId,
+        };
     }
 
     /// <summary>
     /// Remove a favorite entry for a user.
     /// </summary>
+    /// <param name="userId">The user ID.</param>
+    /// <param name="foodId">The unique identifier of the food to unfavorite.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True if the favorite was removed, otherwise false.</returns>
     public async Task<bool> RemoveFavoriteAsync(
         string userId,
         Guid foodId,

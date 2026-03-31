@@ -29,12 +29,6 @@ public enum StateSpanCategory
     Profile,
 
     /// <summary>
-    /// Pump-confirmed basal delivery rate.
-    /// Use metadata.origin to distinguish between Algorithm, Scheduled, Manual, and Suspended.
-    /// </summary>
-    BasalDelivery,
-
-    /// <summary>
     /// User-annotated sleep period
     /// </summary>
     Sleep,
@@ -57,7 +51,12 @@ public enum StateSpanCategory
     /// <summary>
     /// Data exclusion period (compression lows, sensor errors)
     /// </summary>
-    DataExclusion
+    DataExclusion,
+
+    /// <summary>
+    /// AAPS temporary glucose target (Eating Soon, Activity, Manual)
+    /// </summary>
+    TemporaryTarget
 }
 
 /// <summary>
@@ -157,6 +156,23 @@ public enum OverrideState
 }
 
 /// <summary>
+/// Temporary target states
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<TemporaryTargetState>))]
+public enum TemporaryTargetState
+{
+    /// <summary>
+    /// Temporary target is active
+    /// </summary>
+    Active,
+
+    /// <summary>
+    /// Temporary target was cancelled
+    /// </summary>
+    Cancelled
+}
+
+/// <summary>
 /// Profile states
 /// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter<ProfileState>))]
@@ -168,46 +184,3 @@ public enum ProfileState
     Active
 }
 
-/// <summary>
-/// Basal delivery states
-/// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<BasalDeliveryState>))]
-public enum BasalDeliveryState
-{
-    /// <summary>
-    /// Basal rate is being delivered
-    /// </summary>
-    Active
-}
-
-/// <summary>
-/// What initiated the basal delivery rate
-/// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<BasalDeliveryOrigin>))]
-public enum BasalDeliveryOrigin
-{
-    /// <summary>
-    /// Closed-loop algorithm adjusted (CamAPS, Control-IQ, Loop)
-    /// </summary>
-    Algorithm,
-
-    /// <summary>
-    /// Pump's programmed basal schedule
-    /// </summary>
-    Scheduled,
-
-    /// <summary>
-    /// User-initiated temporary rate
-    /// </summary>
-    Manual,
-
-    /// <summary>
-    /// Delivery suspended (rate = 0)
-    /// </summary>
-    Suspended,
-
-    /// <summary>
-    /// Derived from profile when no pump data available
-    /// </summary>
-    Inferred
-}
