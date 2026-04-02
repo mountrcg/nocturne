@@ -317,15 +317,15 @@ importers:
 
   packages/glucose-chart:
     dependencies:
+      '@lucide/svelte':
+        specifier: '>=0.400.0'
+        version: 0.563.1(svelte@5.50.0)
       d3:
         specifier: '>=7.0.0'
         version: 7.9.0
       layerchart:
         specifier: '>=2.0.0-next.0'
         version: 2.0.0-next.43(svelte@5.50.0)
-      lucide-svelte:
-        specifier: '>=0.400.0'
-        version: 0.563.0(svelte@5.50.0)
       tailwindcss:
         specifier: '>=4.0.0'
         version: 4.1.18
