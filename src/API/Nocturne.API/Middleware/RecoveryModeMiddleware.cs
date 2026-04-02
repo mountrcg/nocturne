@@ -33,6 +33,15 @@ public class RecoveryModeMiddleware
 
         var path = context.Request.Path.Value ?? "";
 
+        // Allow service-to-service calls authenticated via api-secret header.
+        // The secret is validated downstream by ApiSecretHandler; we just need
+        // to let the request through the setup/recovery gate.
+        if (!string.IsNullOrEmpty(context.Request.Headers["api-secret"].FirstOrDefault()))
+        {
+            await _next(context);
+            return;
+        }
+
         // Allow passkey, TOTP, metadata, and slug validation endpoints
         if (path.StartsWith("/api/auth/passkey/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("/api/auth/totp/", StringComparison.OrdinalIgnoreCase) ||
