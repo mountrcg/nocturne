@@ -11,9 +11,10 @@ namespace Nocturne.API.Services.Auth;
 /// non-system subject has neither a passkey credential nor an OIDC binding,
 /// or when the NOCTURNE_RECOVERY_MODE environment variable is set to "true".
 ///
-/// In multitenancy mode (BaseDomain configured), the setup-required check is
-/// skipped because an empty database is the expected initial state — tenants
-/// are created via the external provisioning flow.
+/// In single-tenant mode, this also sets <see cref="RecoveryModeState.IsSetupRequired"/>
+/// when no non-system subjects exist (fresh database). In multi-tenant mode,
+/// per-tenant setup is handled by TenantSetupMiddleware instead, so the global
+/// setup flag is not used.
 /// </summary>
 public class RecoveryModeCheckService : IHostedService
 {
@@ -34,6 +35,8 @@ public class RecoveryModeCheckService : IHostedService
         _multitenancyConfig = multitenancyConfig.Value;
         _logger = logger;
     }
+
+    private bool IsMultiTenantMode => !string.IsNullOrEmpty(_multitenancyConfig.BaseDomain);
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -62,10 +65,23 @@ public class RecoveryModeCheckService : IHostedService
 
             if (!activeSubjects)
             {
-                _state.IsSetupRequired = true;
-                _logger.LogWarning(
-                    "Setup mode enabled: no user subjects found (fresh database)"
-                );
+                if (IsMultiTenantMode)
+                {
+                    // In multi-tenant mode, an empty database is the expected initial
+                    // state. Per-tenant setup is handled by TenantSetupMiddleware, so
+                    // we don't set the global setup flag which would block all traffic.
+                    _logger.LogInformation(
+                        "No user subjects found (fresh database) — multi-tenant mode, " +
+                        "per-tenant setup will be handled by TenantSetupMiddleware"
+                    );
+                }
+                else
+                {
+                    _state.IsSetupRequired = true;
+                    _logger.LogWarning(
+                        "Setup mode enabled: no user subjects found (fresh database)"
+                    );
+                }
                 return;
             }
 
