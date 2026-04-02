@@ -1,7 +1,10 @@
+using Fido2NetLib;
 using FluentAssertions;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Nocturne.API.Services.Auth;
 using Nocturne.Core.Contracts;
 using Nocturne.Infrastructure.Data;
@@ -374,17 +377,20 @@ public class PasskeyServiceTests
     {
         // We use a mock Fido2 - it won't be called for DB-only tests.
         // For methods that call Fido2, integration tests are needed.
-        var fido2 = new Fido2NetLib.Fido2(new Fido2NetLib.Fido2Configuration
+        var fido2Config = new Fido2Configuration
         {
             ServerDomain = "localhost",
             ServerName = "Test",
             Origins = new HashSet<string> { "https://localhost" },
-        });
+        };
+        var fido2 = new Fido2NetLib.Fido2(fido2Config);
 
         var dataProtectionProvider = new EphemeralDataProtectionProvider();
+        var httpContextAccessor = new HttpContextAccessor();
+        var fido2Options = Options.Create(fido2Config);
         var logger = NullLogger<PasskeyService>.Instance;
 
-        return new PasskeyService(_dbContext, fido2, dataProtectionProvider, logger);
+        return new PasskeyService(_dbContext, fido2, dataProtectionProvider, httpContextAccessor, fido2Options, logger);
     }
 
     private static PasskeyCredentialEntity CreateCredentialEntity(
