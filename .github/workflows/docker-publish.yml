@@ -503,11 +503,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@nocturne'
+          scope: '@nightscout'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         working-directory: src/Web
-      - name: Publish @nocturne/glucose-chart
+      - name: Publish @nightscout/glucose-chart
         run: pnpm publish --access public --no-git-checks
         working-directory: src/Web/packages/glucose-chart
         env:

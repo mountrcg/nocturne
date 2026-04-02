@@ -1,5 +1,5 @@
 {
-  "name": "@nocturne/glucose-chart",
+  "name": "@nightscout/glucose-chart",
   "version": "0.1.0",
   "type": "module",
   "exports": {
