@@ -46,9 +46,7 @@ public class AuthenticationTestFactory : WebApplicationFactory<Nocturne.API.Prog
                         ["Logging:LogLevel:Microsoft"] = "Error",
                         ["Logging:LogLevel:System"] = "Error",
 
-                        // Don't set a default API_SECRET here - let tests override it
-                        // ["API_SECRET"] = "",
-                        ["JWT_SECRET"] = "test-jwt-secret-for-authentication-tests",
+                        ["API_SECRET"] = "test-api-secret-for-authentication-tests",
                     }
                 );
             }

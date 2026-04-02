@@ -189,8 +189,9 @@ public class FoodRepository : IFoodRepository
 
             if (existingEntity != null)
             {
-                // Update existing entity instead of inserting a duplicate
+                var tenantId = existingEntity.TenantId;
                 _context.Entry(existingEntity).CurrentValues.SetValues(entity);
+                existingEntity.TenantId = tenantId;
                 resultEntities.Add(existingEntity);
             }
             else

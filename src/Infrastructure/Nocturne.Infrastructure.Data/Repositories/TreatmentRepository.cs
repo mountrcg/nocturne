@@ -31,7 +31,8 @@ public class TreatmentRepository : ITreatmentRepository
         NocturneDbContext context,
         IQueryParser queryParser,
         IDeduplicationService deduplicationService,
-        ILogger<TreatmentRepository> logger)
+        ILogger<TreatmentRepository> logger
+    )
     {
         _context = context;
         _queryParser = queryParser;
@@ -110,13 +111,14 @@ public class TreatmentRepository : ITreatmentRepository
     public async Task<IReadOnlyList<Treatment>> GetMealTreatmentsInTimeRangeAsync(
         DateTimeOffset from,
         DateTimeOffset to,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default
+    )
     {
         var fromMills = from.ToUnixTimeMilliseconds();
         var toMills = to.ToUnixTimeMilliseconds();
 
-        var entities = await _context.Treatments
-            .Where(t => t.Mills >= fromMills && t.Mills <= toMills)
+        var entities = await _context
+            .Treatments.Where(t => t.Mills >= fromMills && t.Mills <= toMills)
             .Where(t => t.Carbs > 0 || (t.EventType != null && t.EventType.Contains("Meal")))
             .OrderBy(t => t.Mills)
             .ToListAsync(cancellationToken);
@@ -136,10 +138,11 @@ public class TreatmentRepository : ITreatmentRepository
         long startMills,
         long endMills,
         int count = 10000,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default
+    )
     {
-        var entities = await _context.Treatments
-            .Where(t => t.Mills >= startMills && t.Mills <= endMills)
+        var entities = await _context
+            .Treatments.Where(t => t.Mills >= startMills && t.Mills <= endMills)
             .OrderByDescending(t => t.Mills)
             .Take(count)
             .ToListAsync(cancellationToken);
@@ -190,8 +193,9 @@ public class TreatmentRepository : ITreatmentRepository
 
                 if (existingEntity != null)
                 {
-                    // Update existing entity instead of inserting a duplicate
+                    var tenantId = existingEntity.TenantId;
                     _context.Entry(existingEntity).CurrentValues.SetValues(entity);
+                    existingEntity.TenantId = tenantId;
                     resultEntities.Add(existingEntity);
                 }
                 else
@@ -218,14 +222,15 @@ public class TreatmentRepository : ITreatmentRepository
                     Insulin = entity.Insulin,
                     InsulinTolerance = 0.1, // 0.1 unit tolerance
                     Carbs = entity.Carbs,
-                    CarbsTolerance = 1.0 // 1g tolerance
+                    CarbsTolerance = 1.0, // 1g tolerance
                 };
 
                 var canonicalId = await _deduplicationService.GetOrCreateCanonicalIdAsync(
                     RecordType.Treatment,
                     entity.Mills,
                     criteria,
-                    cancellationToken);
+                    cancellationToken
+                );
 
                 await _deduplicationService.LinkRecordAsync(
                     canonicalId,
@@ -233,7 +238,8 @@ public class TreatmentRepository : ITreatmentRepository
                     entity.Id,
                     entity.Mills,
                     entity.DataSource ?? "unknown",
-                    cancellationToken);
+                    cancellationToken
+                );
             }
             catch (Exception ex)
             {
@@ -335,9 +341,7 @@ public class TreatmentRepository : ITreatmentRepository
 
         var now = DateTime.UtcNow;
         var deletedCount = await query.ExecuteUpdateAsync(
-            s => s
-                .SetProperty(t => t.DeletedAt, now)
-                .SetProperty(t => t.SysUpdatedAt, now),
+            s => s.SetProperty(t => t.DeletedAt, now).SetProperty(t => t.SysUpdatedAt, now),
             cancellationToken
         );
         return deletedCount;
@@ -358,9 +362,7 @@ public class TreatmentRepository : ITreatmentRepository
         var deletedCount = await _context
             .Treatments.Where(t => t.DataSource == dataSource)
             .ExecuteUpdateAsync(
-                s => s
-                    .SetProperty(t => t.DeletedAt, now)
-                    .SetProperty(t => t.SysUpdatedAt, now),
+                s => s.SetProperty(t => t.DeletedAt, now).SetProperty(t => t.SysUpdatedAt, now),
                 cancellationToken
             );
         return deletedCount;
@@ -507,7 +509,14 @@ public class TreatmentRepository : ITreatmentRepository
     )
     {
         return await GetTreatmentsWithAdvancedFilterAsync(
-            null, count, skip, findQuery, null, reverseResults, cancellationToken);
+            null,
+            count,
+            skip,
+            findQuery,
+            null,
+            reverseResults,
+            cancellationToken
+        );
     }
 
     /// <summary>
@@ -523,7 +532,14 @@ public class TreatmentRepository : ITreatmentRepository
     )
     {
         return await GetTreatmentsWithAdvancedFilterAsync(
-            eventType, count, skip, findQuery, null, reverseResults, cancellationToken);
+            eventType,
+            count,
+            skip,
+            findQuery,
+            null,
+            reverseResults,
+            cancellationToken
+        );
     }
 
     /// <summary>

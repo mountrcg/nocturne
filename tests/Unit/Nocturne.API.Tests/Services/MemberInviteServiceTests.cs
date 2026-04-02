@@ -2,14 +2,13 @@ using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Moq;
 using Nocturne.API.Services;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Contracts.Multitenancy;
 using Nocturne.Core.Models.Authorization;
-using Nocturne.Core.Models.Configuration;
 using Nocturne.Infrastructure.Data;
 using Nocturne.Infrastructure.Data.Entities;
 using Xunit;
@@ -53,10 +52,9 @@ public class MemberInviteServiceTests : IDisposable
 
         _tenantService = new Mock<ITenantService>();
 
-        var oidcOptions = Options.Create(new OidcOptions
-        {
-            BaseUrl = BaseUrl,
-        });
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["BaseUrl"] = BaseUrl })
+            .Build();
 
         var logger = new Mock<ILogger<MemberInviteService>>();
 
@@ -64,7 +62,7 @@ public class MemberInviteServiceTests : IDisposable
             _dbContext,
             _jwtService.Object,
             _tenantService.Object,
-            oidcOptions,
+            configuration,
             logger.Object);
 
         // Seed tenant and subjects

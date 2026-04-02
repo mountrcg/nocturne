@@ -119,7 +119,7 @@ builder.Services.AddNocturneMemoryCache();
 builder.Logging.ClearProviders();
 builder.Logging.AddOpenTelemetry(logging => logging.AddConsoleExporter());
 
-var loopApnsKeyId = Environment.GetEnvironmentVariable("LOOP_APNS_KEY_ID");
+var loopApnsKeyId = builder.Configuration["Loop:ApnsKeyId"];
 Console.WriteLine(
     $"Loop configuration loaded - APNS Key ID: {(string.IsNullOrEmpty(loopApnsKeyId) ? "Not configured" : $"{loopApnsKeyId[..Math.Min(4, loopApnsKeyId.Length)]}****")}"
 );
@@ -179,10 +179,12 @@ builder.Services.AddConnectorInfrastructure(builder.Configuration);
 builder.Services.AddMigrationServices();
 
 
-// Configure JWT authentication
-var jwtOptions = builder.Configuration.GetSection(JwtOptions.SectionName);
-var secretKey = jwtOptions["SecretKey"] ?? "DefaultSecretKeyForNocturneWhichShouldBeChanged";
-var key = Encoding.ASCII.GetBytes(secretKey);
+// Configure JWT authentication - derive signing key from api-secret
+var secretKey =
+    builder.Configuration[$"Parameters:{ServiceNames.Parameters.ApiSecret}"]
+    ?? builder.Configuration[ServiceNames.ConfigKeys.ApiSecret]
+    ?? throw new InvalidOperationException("api-secret must be configured for JWT signing.");
+var key = Encoding.UTF8.GetBytes(secretKey);
 
 builder
     .Services.AddAuthentication(options =>

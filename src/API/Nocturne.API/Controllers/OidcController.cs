@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Nocturne.API.Attributes;
 using OpenApi.Remote.Attributes;
 using Nocturne.API.Extensions;
+using Nocturne.Core.Constants;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models.Authorization;
 using Nocturne.Core.Models.Configuration;
@@ -26,6 +27,7 @@ public class OidcController : ControllerBase
     private readonly IOidcProviderService _providerService;
     private readonly IAuthAuditService _auditService;
     private readonly OidcOptions _options;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<OidcController> _logger;
 
     /// <summary>
@@ -36,6 +38,7 @@ public class OidcController : ControllerBase
         IOidcProviderService providerService,
         IAuthAuditService auditService,
         IOptions<OidcOptions> options,
+        IConfiguration configuration,
         ILogger<OidcController> logger
     )
     {
@@ -43,6 +46,7 @@ public class OidcController : ControllerBase
         _providerService = providerService;
         _auditService = auditService;
         _options = options.Value;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -88,13 +92,6 @@ public class OidcController : ControllerBase
         [FromQuery] string? returnUrl = null
     )
     {
-        if (!_options.Enabled)
-        {
-            return BadRequest(
-                new { error = "oidc_disabled", message = "OIDC authentication is not enabled" }
-            );
-        }
-
         // Validate return URL to prevent open redirect attacks
         if (!string.IsNullOrEmpty(returnUrl) && !IsValidReturnUrl(returnUrl))
         {
@@ -217,7 +214,7 @@ public class OidcController : ControllerBase
         );
 
         // Redirect to return URL
-        var returnUrl = result.ReturnUrl ?? _options.DefaultReturnUrl;
+        var returnUrl = result.ReturnUrl ?? "/";
         return Redirect(returnUrl);
     }
 
@@ -379,24 +376,15 @@ public class OidcController : ControllerBase
     /// </summary>
     private bool IsValidReturnUrl(string returnUrl)
     {
-        // Only allow relative URLs
         if (Uri.TryCreate(returnUrl, UriKind.Relative, out _))
         {
             return true;
         }
 
-        // Or URLs that start with our base URL
-        if (!string.IsNullOrEmpty(_options.BaseUrl))
+        var baseUrl = _configuration[ServiceNames.ConfigKeys.BaseUrl];
+        if (!string.IsNullOrEmpty(baseUrl))
         {
-            return returnUrl.StartsWith(_options.BaseUrl, StringComparison.OrdinalIgnoreCase);
-        }
-
-        // Or URLs matching allowed patterns
-        if (_options.AllowedReturnUrlPatterns.Count > 0)
-        {
-            return _options.AllowedReturnUrlPatterns.Any(pattern =>
-                returnUrl.StartsWith(pattern, StringComparison.OrdinalIgnoreCase)
-            );
+            return returnUrl.StartsWith(baseUrl, StringComparison.OrdinalIgnoreCase);
         }
 
         return false;

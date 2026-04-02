@@ -28,6 +28,7 @@ using Nocturne.Core.Contracts.Treatments;
 using Nocturne.Core.Contracts.Multitenancy;
 using Nocturne.Core.Contracts.V4;
 using Nocturne.Core.Contracts.V4.Repositories;
+using Nocturne.Core.Constants;
 using Nocturne.Core.Models;
 using Nocturne.Core.Models.Configuration;
 using Nocturne.Infrastructure.Data.Abstractions;
@@ -122,6 +123,17 @@ public static class ServiceRegistrationExtensions
     {
         // Options
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
+        services.PostConfigure<JwtOptions>(options =>
+        {
+            if (string.IsNullOrEmpty(options.SecretKey))
+            {
+                options.SecretKey =
+                    configuration[$"Parameters:{ServiceNames.Parameters.ApiSecret}"]
+                    ?? configuration[ServiceNames.ConfigKeys.ApiSecret]
+                    ?? throw new InvalidOperationException(
+                        "JWT signing key could not be derived: api-secret is not configured.");
+            }
+        });
         services.Configure<OidcOptions>(configuration.GetSection(OidcOptions.SectionName));
         // Auth services
         services.AddScoped<IAuthAuditService, AuthAuditService>();
@@ -481,16 +493,7 @@ public static class ServiceRegistrationExtensions
         );
 
         // Loop/OpenAPS integration
-        services.Configure<LoopConfiguration>(options =>
-        {
-            options.ApnsKey = Environment.GetEnvironmentVariable("LOOP_APNS_KEY");
-            options.ApnsKeyId = Environment.GetEnvironmentVariable("LOOP_APNS_KEY_ID");
-            options.DeveloperTeamId = Environment.GetEnvironmentVariable(
-                "LOOP_DEVELOPER_TEAM_ID"
-            );
-            options.PushServerEnvironment =
-                Environment.GetEnvironmentVariable("LOOP_PUSH_SERVER_ENVIRONMENT") ?? "development";
-        });
+        services.Configure<LoopConfiguration>(configuration.GetSection("Loop"));
         services.AddScoped<ILoopService, LoopService>();
         services.AddScoped<IOpenApsService, OpenApsService>();
         services.AddScoped<IPumpAlertService, PumpAlertService>();

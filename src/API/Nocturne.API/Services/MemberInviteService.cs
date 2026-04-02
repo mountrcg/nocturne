@@ -1,8 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
+using Nocturne.Core.Constants;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Contracts.Multitenancy;
-using Nocturne.Core.Models.Configuration;
 using Nocturne.Infrastructure.Data;
 using Nocturne.Infrastructure.Data.Entities;
 
@@ -16,20 +15,20 @@ public class MemberInviteService : IMemberInviteService
     private readonly NocturneDbContext _dbContext;
     private readonly IJwtService _jwtService;
     private readonly ITenantService _tenantService;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<MemberInviteService> _logger;
-    private readonly OidcOptions _oidcOptions;
 
     public MemberInviteService(
         NocturneDbContext dbContext,
         IJwtService jwtService,
         ITenantService tenantService,
-        IOptions<OidcOptions> oidcOptions,
+        IConfiguration configuration,
         ILogger<MemberInviteService> logger)
     {
         _dbContext = dbContext;
         _jwtService = jwtService;
         _tenantService = tenantService;
-        _oidcOptions = oidcOptions.Value;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -85,7 +84,7 @@ public class MemberInviteService : IMemberInviteService
             "invite_created", entity.Id, tenantId, roleIds.Count, entity.ExpiresAt);
 
         // Build invite URL
-        var baseUrl = _oidcOptions.BaseUrl?.TrimEnd('/') ?? "";
+        var baseUrl = _configuration[ServiceNames.ConfigKeys.BaseUrl]?.TrimEnd('/') ?? "";
         var inviteUrl = $"{baseUrl}/invite/{token}";
 
         return new MemberInviteResult(

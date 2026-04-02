@@ -12907,7 +12907,7 @@ msgid "Start a tracker from your definitions"
 msgstr "Start a tracker from your definitions"
 
 #. placeholder {0}: formatAge(instance.ageHours ?? 0)
-#. placeholder {1}: formatDate(instance.startedAt)
+#. placeholder {1}: formatDate( instance.startedAt )
 #: src/routes/settings/trackers/+page.svelte
 msgid "{0} old · Started {1} <0/>"
 msgstr "{0} old · Started {1} <0/>"
@@ -13065,13 +13065,12 @@ msgstr "Controls whether this tracker is visible to unauthenticated users"
 msgid "Event Integration (Nightscout)"
 msgstr "Event Integration (Nightscout)"
 
-#: src/routes/settings/trackers/+page.svelte
-msgid ""
-"Optionally create treatment events when this tracker starts or\n"
-"completes. This maintains compatibility with existing CAGE/SAGE pills."
-msgstr ""
-"Optionally create treatment events when this tracker starts or\n"
-"completes. This maintains compatibility with existing CAGE/SAGE pills."
+#~ msgid ""
+#~ "Optionally create treatment events when this tracker starts or\n"
+#~ "completes. This maintains compatibility with existing CAGE/SAGE pills."
+#~ msgstr ""
+#~ "Optionally create treatment events when this tracker starts or\n"
+#~ "completes. This maintains compatibility with existing CAGE/SAGE pills."
 
 #: src/routes/settings/trackers/+page.svelte
 msgid "Create event on start"
@@ -18311,3 +18310,19 @@ msgstr "<0/> Sync Failed"
 #: src/lib/components/settings/DataSourceRow.svelte
 msgid "{0} synced so far"
 msgstr "{0} synced so far"
+
+#: src/routes/settings/setup/+page.svelte
+msgid "Coming from Nightscout?"
+msgstr "Coming from Nightscout?"
+
+#: src/routes/settings/setup/+page.svelte
+msgid "Migrate your data and keep both systems in sync during transition"
+msgstr "Migrate your data and keep both systems in sync during transition"
+
+#: src/routes/settings/trackers/+page.svelte
+msgid ""
+"Optionally create treatment events when this tracker starts or completes.\n"
+"This maintains compatibility with existing CAGE/SAGE pills."
+msgstr ""
+"Optionally create treatment events when this tracker starts or completes.\n"
+"This maintains compatibility with existing CAGE/SAGE pills."

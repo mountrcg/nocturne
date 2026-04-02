@@ -90,9 +90,9 @@ public class JwtOptions
     public const string SectionName = "Jwt";
 
     /// <summary>
-    /// Secret key for signing JWT tokens. Should be at least 32 characters.
+    /// Secret key for signing JWT tokens. Derived automatically from api-secret
+    /// via PostConfigure if not explicitly set.
     /// </summary>
-    [Required]
     public string SecretKey { get; set; } = string.Empty;
 
     /// <summary>

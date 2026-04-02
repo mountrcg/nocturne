@@ -11373,11 +11373,10 @@ msgstr ""
 msgid "Event Integration (Nightscout)"
 msgstr ""
 
-#: src/routes/settings/trackers/+page.svelte
-msgid ""
-"Optionally create treatment events when this tracker starts or\n"
-"completes. This maintains compatibility with existing CAGE/SAGE pills."
-msgstr ""
+#~ msgid ""
+#~ "Optionally create treatment events when this tracker starts or\n"
+#~ "completes. This maintains compatibility with existing CAGE/SAGE pills."
+#~ msgstr ""
 
 #: src/routes/settings/trackers/+page.svelte
 msgid "Create event on start"
@@ -11698,7 +11697,7 @@ msgstr ""
 #~ msgstr ""
 
 #. placeholder {0}: formatAge(instance.ageHours ?? 0)
-#. placeholder {1}: formatDate(instance.startedAt)
+#. placeholder {1}: formatDate( instance.startedAt )
 #: src/routes/settings/trackers/+page.svelte
 msgid "{0} old · Started {1} <0/>"
 msgstr ""
@@ -22968,4 +22967,18 @@ msgstr ""
 #. placeholder {0}: Object.entries(syncProgress.itemsSyncedSoFar) .map(([type, count]) => `${count.toLocaleString()} ${type}`) .join(", ")
 #: src/lib/components/settings/DataSourceRow.svelte
 msgid "{0} synced so far"
+msgstr ""
+
+#: src/routes/settings/setup/+page.svelte
+msgid "Coming from Nightscout?"
+msgstr ""
+
+#: src/routes/settings/setup/+page.svelte
+msgid "Migrate your data and keep both systems in sync during transition"
+msgstr ""
+
+#: src/routes/settings/trackers/+page.svelte
+msgid ""
+"Optionally create treatment events when this tracker starts or completes.\n"
+"This maintains compatibility with existing CAGE/SAGE pills."
 msgstr ""

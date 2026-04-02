@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using Nocturne.Core.Constants;
 using Nocturne.Core.Contracts;
 using Nocturne.Core.Models.Configuration;
 using Nocturne.Core.Models.Authorization;
@@ -20,6 +21,7 @@ public class OidcAuthService : IOidcAuthService
     private readonly IRefreshTokenService _refreshTokenService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly OidcOptions _options;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<OidcAuthService> _logger;
 
     /// <summary>
@@ -32,6 +34,7 @@ public class OidcAuthService : IOidcAuthService
         IRefreshTokenService refreshTokenService,
         IHttpClientFactory httpClientFactory,
         IOptions<OidcOptions> options,
+        IConfiguration configuration,
         ILogger<OidcAuthService> logger
     )
     {
@@ -41,6 +44,7 @@ public class OidcAuthService : IOidcAuthService
         _refreshTokenService = refreshTokenService;
         _httpClientFactory = httpClientFactory;
         _options = options.Value;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -83,8 +87,8 @@ public class OidcAuthService : IOidcAuthService
         var stateData = new OidcStateData
         {
             ProviderId = provider.Id,
-            ReturnUrl = returnUrl ?? _options.DefaultReturnUrl,
-            Nonce = _options.State.IncludeNonce ? GenerateRandomString(32) : null,
+            ReturnUrl = returnUrl ?? "/",
+            Nonce = GenerateRandomString(32),
             CreatedAt = DateTimeOffset.UtcNow,
             ExpiresAt = DateTimeOffset.UtcNow.Add(_options.State.Lifetime),
         };
@@ -396,7 +400,7 @@ public class OidcAuthService : IOidcAuthService
                     var logoutUrl = new UriBuilder(discoveryDoc.EndSessionEndpoint);
                     var query = System.Web.HttpUtility.ParseQueryString(string.Empty);
                     query["client_id"] = provider.ClientId;
-                    query["post_logout_redirect_uri"] = _options.BaseUrl ?? "";
+                    query["post_logout_redirect_uri"] = _configuration[ServiceNames.ConfigKeys.BaseUrl] ?? "";
                     logoutUrl.Query = query.ToString();
                     providerLogoutUrl = logoutUrl.ToString();
                 }
@@ -452,7 +456,7 @@ public class OidcAuthService : IOidcAuthService
     /// </summary>
     private string GetRedirectUri()
     {
-        var baseUrl = _options.BaseUrl?.TrimEnd('/') ?? "http://localhost:5000";
+        var baseUrl = _configuration[ServiceNames.ConfigKeys.BaseUrl]?.TrimEnd('/') ?? "http://localhost:5000";
         return $"{baseUrl}/auth/callback";
     }
 

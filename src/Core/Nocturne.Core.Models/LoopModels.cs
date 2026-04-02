@@ -96,8 +96,8 @@ public class LoopSettings
 }
 
 /// <summary>
-/// Loop configuration settings from environment variables
-/// Matches the legacy env.extendedSettings.loop structure
+/// Loop configuration settings for Apple Push Notification Service integration.
+/// Bound from appsettings.json section "Loop".
 /// </summary>
 public class LoopConfiguration
 {
@@ -117,9 +117,9 @@ public class LoopConfiguration
     public string? DeveloperTeamId { get; set; }
 
     /// <summary>
-    /// APNS environment - "production" or "sandbox"
+    /// APNS environment - "production" or "development"
     /// </summary>
-    public string? PushServerEnvironment { get; set; }
+    public string PushServerEnvironment { get; set; } = "development";
 
     /// <summary>
     /// Optional override URL for APNS server (used for testing)

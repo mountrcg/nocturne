@@ -43,7 +43,7 @@ public class GoldenFileWebAppFactory : WebApplicationFactory<Program>
                 ["Features:EnableRealTimeNotifications"] = "false",
                 ["ConnectionStrings:DefaultConnection"] = "Data Source=:memory:",
                 ["Logging:LogLevel:Default"] = "Error",
-                ["JWT_SECRET"] = "golden-file-test-jwt-secret-key-minimum-length",
+                ["API_SECRET"] = "golden-file-test-api-secret-key-minimum-length",
             });
         });
 

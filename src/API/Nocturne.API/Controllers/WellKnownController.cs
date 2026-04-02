@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using OpenApi.Remote.Attributes;
 using Nocturne.Core.Models.Authorization;
 using Nocturne.Core.Models.Configuration;
+using Nocturne.Core.Constants;
 
 namespace Nocturne.API.Controllers;
 
@@ -20,18 +21,18 @@ namespace Nocturne.API.Controllers;
 public class WellKnownController : ControllerBase
 {
     private readonly JwtOptions _jwtOptions;
-    private readonly OidcOptions _oidcOptions;
+    private readonly IConfiguration _configuration;
 
     /// <summary>
     /// Creates a new instance of WellKnownController
     /// </summary>
     public WellKnownController(
         IOptions<JwtOptions> jwtOptions,
-        IOptions<OidcOptions> oidcOptions
+        IConfiguration configuration
     )
     {
         _jwtOptions = jwtOptions.Value;
-        _oidcOptions = oidcOptions.Value;
+        _configuration = configuration;
     }
 
     /// <summary>
@@ -156,14 +157,13 @@ public class WellKnownController : ControllerBase
 
     private string GetBaseUrl()
     {
-        if (!string.IsNullOrEmpty(_oidcOptions.BaseUrl))
+        var configuredUrl = _configuration[ServiceNames.ConfigKeys.BaseUrl];
+        if (!string.IsNullOrEmpty(configuredUrl))
         {
-            return _oidcOptions.BaseUrl.TrimEnd('/');
+            return configuredUrl.TrimEnd('/');
         }
 
-        var scheme = Request.Scheme;
-        var host = Request.Host.Value;
-        return $"{scheme}://{host}";
+        return $"{Request.Scheme}://{Request.Host}";
     }
 }
 

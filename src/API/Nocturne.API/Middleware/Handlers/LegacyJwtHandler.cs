@@ -1,8 +1,9 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
-using Nocturne.Core.Constants;
 using Nocturne.Core.Models.Authorization;
+using Nocturne.Core.Models.Configuration;
 
 namespace Nocturne.API.Middleware.Handlers;
 
@@ -23,33 +24,24 @@ public class LegacyJwtHandler : IAuthHandler
     /// </summary>
     public string Name => "LegacyJwtHandler";
 
-    private readonly IConfiguration _configuration;
     private readonly ILogger<LegacyJwtHandler> _logger;
-    private readonly byte[]? _jwtKey;
     private readonly TokenValidationParameters? _validationParameters;
 
     /// <summary>
     /// Creates a new instance of LegacyJwtHandler
     /// </summary>
-    public LegacyJwtHandler(IConfiguration configuration, ILogger<LegacyJwtHandler> logger)
+    public LegacyJwtHandler(IOptions<JwtOptions> jwtOptions, ILogger<LegacyJwtHandler> logger)
     {
-        _configuration = configuration;
         _logger = logger;
 
-        // Use JWT_SECRET env var, fall back to API_SECRET, then Jwt:SecretKey from config
-        var jwtSecret =
-            _configuration[ServiceNames.ConfigKeys.JwtSecret]
-            ?? _configuration[ServiceNames.ConfigKeys.ApiSecret]
-            ?? _configuration["Jwt:SecretKey"];
-
-        // Only configure JWT validation if a secret is available
-        if (!string.IsNullOrEmpty(jwtSecret))
+        var secretKey = jwtOptions.Value.SecretKey;
+        if (!string.IsNullOrEmpty(secretKey))
         {
-            _jwtKey = Encoding.UTF8.GetBytes(jwtSecret);
+            var jwtKey = Encoding.UTF8.GetBytes(secretKey);
             _validationParameters = new TokenValidationParameters
             {
                 ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(_jwtKey),
+                IssuerSigningKey = new SymmetricSecurityKey(jwtKey),
                 ValidateIssuer = false,
                 ValidateAudience = false,
                 ValidateLifetime = true,
@@ -59,7 +51,7 @@ public class LegacyJwtHandler : IAuthHandler
         else
         {
             _logger.LogWarning(
-                "No JWT_SECRET, API_SECRET, or Jwt:SecretKey configured - legacy JWT authentication will be disabled"
+                "JWT secret key not configured - legacy JWT authentication will be disabled"
             );
         }
     }
