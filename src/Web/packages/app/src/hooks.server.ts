@@ -15,7 +15,7 @@ import * as js from '../../../locales/js.loader.server.js'
 import { locales } from '../../../locales/data.js'
 import supportedLocales from '../../../supportedLocales.json';
 import { LANGUAGE_COOKIE_NAME } from "$lib/stores/appearance-store.svelte";
-import { isPublicRoute } from "$lib/config/public-routes";
+import { isPublicRoute, STATIC_ASSET_PREFIXES } from "$lib/config/public-routes";
 
 // load at server startup
 loadLocales(main.key, main.loadIDs, main.loadCatalog, locales)
@@ -180,10 +180,25 @@ const authHandle: Handle = async ({ event, resolve }) => {
 const siteSecurityHandle: Handle = async ({ event, resolve }) => {
   const apiBaseUrl = getApiBaseUrl();
 
-  if (!apiBaseUrl || isPublicRoute(event.url.pathname)) {
+  if (!apiBaseUrl) {
     return resolve(event);
   }
 
+  const pathname = event.url.pathname;
+
+  // Skip the status probe entirely for static assets and for pages that ARE
+  // the setup/recovery/auth destinations — probing those would cause infinite
+  // redirect loops (503 → redirect to setup → probe → 503 → redirect …).
+  const skipProbe =
+    STATIC_ASSET_PREFIXES.some((p) => pathname.startsWith(p)) ||
+    pathname.startsWith("/settings/setup") ||
+    pathname.startsWith("/auth");
+
+  if (skipProbe) {
+    return resolve(event);
+  }
+
+  // Probe the API for setup/recovery mode and site-level requireAuthentication.
   try {
     if (!event.locals.siteSecurityChecked) {
       const hostHeader = event.request.headers.get("host");
@@ -199,8 +214,9 @@ const siteSecurityHandle: Handle = async ({ event, resolve }) => {
       event.locals.siteSecurityChecked = true;
     }
 
-    if (event.locals.requireAuthentication && !event.locals.isAuthenticated) {
-      const returnUrl = encodeURIComponent(event.url.pathname + event.url.search);
+    // Only enforce requireAuthentication on non-public routes
+    if (!isPublicRoute(pathname) && event.locals.requireAuthentication && !event.locals.isAuthenticated) {
+      const returnUrl = encodeURIComponent(pathname + event.url.search);
       return new Response(null, {
         status: 303,
         headers: {

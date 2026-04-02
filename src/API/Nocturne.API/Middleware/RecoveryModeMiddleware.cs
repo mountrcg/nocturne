@@ -33,14 +33,10 @@ public class RecoveryModeMiddleware
 
         var path = context.Request.Path.Value ?? "";
 
-        // Allow service-to-service calls authenticated via api-secret header.
-        // The secret is validated downstream by ApiSecretHandler; we just need
-        // to let the request through the setup/recovery gate.
-        if (!string.IsNullOrEmpty(context.Request.Headers["api-secret"].FirstOrDefault()))
-        {
-            await _next(context);
-            return;
-        }
+        // Note: We do NOT bypass for api-secret here. The web frontend attaches
+        // api-secret on all SSR requests, so bypassing would prevent the setup
+        // wizard from ever being shown. The global setup/recovery gate must block
+        // everything except passkey/setup endpoints.
 
         // Allow passkey, TOTP, metadata, and slug validation endpoints
         if (path.StartsWith("/api/auth/passkey/", StringComparison.OrdinalIgnoreCase) ||

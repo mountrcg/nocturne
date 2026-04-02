@@ -52,14 +52,6 @@ public class TenantSetupMiddleware
 
         var path = context.Request.Path.Value ?? "";
 
-        // Allow service-to-service calls authenticated via api-secret header.
-        // The secret is validated downstream by ApiSecretHandler.
-        if (!string.IsNullOrEmpty(context.Request.Headers["api-secret"].FirstOrDefault()))
-        {
-            await _next(context);
-            return;
-        }
-
         // Allow passkey, TOTP, metadata, and slug validation paths
         if (AllowedPaths.Any(p => path.Equals(p, StringComparison.OrdinalIgnoreCase)) ||
             AllowedPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
