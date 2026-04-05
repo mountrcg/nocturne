@@ -8,22 +8,13 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// Each record represents one registered authenticator (platform key, security key, etc.)
 /// </summary>
 [Table("passkey_credentials")]
-public class PasskeyCredentialEntity : ITenantScoped
+public class PasskeyCredentialEntity
 {
     /// <summary>
     /// Primary key - UUID Version 7
     /// </summary>
     [Key]
     public Guid Id { get; set; }
-
-    /// <summary>
-    /// Tenant this credential belongs to
-    /// </summary>
-    /// <summary>
-    /// The unique identifier of the tenant this record belongs to.
-    /// </summary>
-    [Column("tenant_id")]
-    public Guid TenantId { get; set; }
 
     /// <summary>
     /// Foreign key to the subject (user) who owns this credential

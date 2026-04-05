@@ -74,7 +74,7 @@ public class PasskeyService : IPasskeyService
         Guid subjectId, string username, Guid tenantId)
     {
         var existingCredentials = await _dbContext.PasskeyCredentials
-            .Where(c => c.SubjectId == subjectId && c.TenantId == tenantId)
+            .Where(c => c.SubjectId == subjectId)
             .Select(c => new PublicKeyCredentialDescriptor(c.CredentialId))
             .ToListAsync();
 
@@ -124,7 +124,7 @@ public class PasskeyService : IPasskeyService
             IsCredentialIdUniqueToUserCallback = async (args, _) =>
             {
                 var exists = await _dbContext.PasskeyCredentials
-                    .AnyAsync(c => c.TenantId == tenantId && c.CredentialId == args.CredentialId);
+                    .AnyAsync(c => c.CredentialId == args.CredentialId);
                 return !exists;
             },
         });
@@ -134,7 +134,7 @@ public class PasskeyService : IPasskeyService
 
         // Enforce 20 credential cap
         var existingCount = await _dbContext.PasskeyCredentials
-            .CountAsync(c => c.SubjectId == subjectId && c.TenantId == tenantId);
+            .CountAsync(c => c.SubjectId == subjectId);
 
         if (existingCount >= MaxCredentialsPerSubject)
         {
@@ -145,7 +145,6 @@ public class PasskeyService : IPasskeyService
         var entity = new PasskeyCredentialEntity
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
             SubjectId = subjectId,
             CredentialId = credential.Id,
             PublicKey = credential.PublicKey,
@@ -190,7 +189,7 @@ public class PasskeyService : IPasskeyService
             ?? throw new InvalidOperationException($"No active subject found with username '{username}' in this tenant.");
 
         var credentials = await _dbContext.PasskeyCredentials
-            .Where(c => c.SubjectId == subject.Id && c.TenantId == tenantId)
+            .Where(c => c.SubjectId == subject.Id)
             .Select(c => new PublicKeyCredentialDescriptor(c.CredentialId))
             .ToListAsync();
 
@@ -223,8 +222,14 @@ public class PasskeyService : IPasskeyService
         var rawId = assertionResponse.RawId;
         var storedCredential = await _dbContext.PasskeyCredentials
             .Include(c => c.Subject)
-            .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.CredentialId == rawId)
-            ?? throw new InvalidOperationException("Credential not found for this tenant.");
+            .FirstOrDefaultAsync(c => c.CredentialId == rawId)
+            ?? throw new InvalidOperationException("Credential not found.");
+
+        // Verify the credential's subject is a member of the current tenant
+        var isMember = await _dbContext.TenantMembers
+            .AnyAsync(tm => tm.TenantId == tenantId && tm.SubjectId == storedCredential.SubjectId);
+        if (!isMember)
+            throw new InvalidOperationException("Credential owner is not a member of this tenant.");
 
         AllowOriginFromClientData(assertionResponse.Response.ClientDataJson);
         var result = await _fido2.MakeAssertionAsync(new MakeAssertionParams
@@ -236,7 +241,7 @@ public class PasskeyService : IPasskeyService
             IsUserHandleOwnerOfCredentialIdCallback = async (args, _) =>
             {
                 var credential = await _dbContext.PasskeyCredentials
-                    .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.CredentialId == args.CredentialId);
+                    .FirstOrDefaultAsync(c => c.CredentialId == args.CredentialId);
 
                 return credential is not null && credential.SubjectId.ToByteArray().SequenceEqual(args.UserHandle);
             },
@@ -260,7 +265,7 @@ public class PasskeyService : IPasskeyService
     public async Task<List<PasskeyCredentialInfo>> GetCredentialsAsync(Guid subjectId, Guid tenantId)
     {
         return await _dbContext.PasskeyCredentials
-            .Where(c => c.SubjectId == subjectId && c.TenantId == tenantId)
+            .Where(c => c.SubjectId == subjectId)
             .OrderByDescending(c => c.CreatedAt)
             .Select(c => new PasskeyCredentialInfo(c.Id, c.Label, c.CreatedAt, c.LastUsedAt, c.AaGuid))
             .ToListAsync();
@@ -269,7 +274,7 @@ public class PasskeyService : IPasskeyService
     public async Task RemoveCredentialAsync(Guid credentialId, Guid subjectId, Guid tenantId)
     {
         var credential = await _dbContext.PasskeyCredentials
-            .FirstOrDefaultAsync(c => c.Id == credentialId && c.SubjectId == subjectId && c.TenantId == tenantId)
+            .FirstOrDefaultAsync(c => c.Id == credentialId && c.SubjectId == subjectId)
             ?? throw new InvalidOperationException("Credential not found.");
 
         _dbContext.PasskeyCredentials.Remove(credential);
@@ -283,7 +288,7 @@ public class PasskeyService : IPasskeyService
     public async Task<int> GetCredentialCountAsync(Guid subjectId, Guid tenantId)
     {
         return await _dbContext.PasskeyCredentials
-            .CountAsync(c => c.SubjectId == subjectId && c.TenantId == tenantId);
+            .CountAsync(c => c.SubjectId == subjectId);
     }
 
     public async Task<bool> HasOidcLinkAsync(Guid subjectId)

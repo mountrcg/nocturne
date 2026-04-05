@@ -69,9 +69,12 @@ public class TenantSetupMiddleware
             return;
         }
 
-        // Check 1: Does this tenant have any passkey credentials at all?
-        // PasskeyCredentialEntity is ITenantScoped — query filter applies automatically.
-        var hasCredentials = await db.PasskeyCredentials.AnyAsync();
+        // Check 1: Does this tenant have any members with passkey credentials?
+        // PasskeyCredentialEntity is subject-scoped (not tenant-scoped), so we join through TenantMembers.
+        var tenantId = tenantAccessor.TenantId;
+        var hasCredentials = await db.TenantMembers
+            .Where(m => m.TenantId == tenantId)
+            .AnyAsync(m => db.PasskeyCredentials.Any(c => c.SubjectId == m.SubjectId));
         if (!hasCredentials)
         {
             _logger.LogDebug(
@@ -91,7 +94,6 @@ public class TenantSetupMiddleware
 
         // Check 2: Does this tenant have any orphaned subjects?
         // Subjects are not tenant-scoped — join through TenantMembers to scope to this tenant.
-        var tenantId = tenantAccessor.TenantId;
         var hasOrphaned = await db.TenantMembers
             .Where(tm => tm.TenantId == tenantId)
             .Join(
@@ -101,7 +103,7 @@ public class TenantSetupMiddleware
                 (tm, s) => s)
             .Where(s =>
                 s.OidcSubjectId == null &&
-                !db.PasskeyCredentials.IgnoreQueryFilters().Any(p => p.SubjectId == s.Id))
+                !db.PasskeyCredentials.Any(p => p.SubjectId == s.Id))
             .AnyAsync();
 
         if (hasOrphaned)

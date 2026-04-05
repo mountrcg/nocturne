@@ -462,7 +462,7 @@ public class PasskeyController : ControllerBase
                     (tm, s) => s)
                 .Where(s =>
                     s.OidcSubjectId == null &&
-                    !_dbContext.PasskeyCredentials.IgnoreQueryFilters().Any(p => p.SubjectId == s.Id))
+                    !_dbContext.PasskeyCredentials.Any(p => p.SubjectId == s.Id))
                 .AnyAsync();
         }
         else
@@ -488,12 +488,14 @@ public class PasskeyController : ControllerBase
 
         if (_tenantAccessor.IsResolved)
         {
-            var hasCredentials = await _dbContext.PasskeyCredentials.AnyAsync();
+            var tenantId = _tenantAccessor.TenantId;
+            var hasCredentials = await _dbContext.TenantMembers
+                .Where(m => m.TenantId == tenantId)
+                .AnyAsync(m => _dbContext.PasskeyCredentials.Any(c => c.SubjectId == m.SubjectId));
             setupRequired = !hasCredentials;
 
             if (hasCredentials)
             {
-                var tenantId = _tenantAccessor.TenantId;
                 recoveryMode = await _dbContext.TenantMembers
                     .Where(tm => tm.TenantId == tenantId)
                     .Join(
@@ -503,7 +505,7 @@ public class PasskeyController : ControllerBase
                         (tm, s) => s)
                     .Where(s =>
                         s.OidcSubjectId == null &&
-                        !_dbContext.PasskeyCredentials.IgnoreQueryFilters().Any(p => p.SubjectId == s.Id))
+                        !_dbContext.PasskeyCredentials.Any(p => p.SubjectId == s.Id))
                     .AnyAsync();
             }
             else
@@ -544,20 +546,6 @@ public class PasskeyController : ControllerBase
         [FromBody] SetupOptionsRequest request,
         [FromServices] RecoveryModeState state)
     {
-        // Single-tenant: RecoveryModeState.IsSetupRequired is set at startup
-        // Multi-tenant: no passkey credentials for this tenant yet (PasskeyCredentialEntity is ITenantScoped)
-        var tenantNeedsSetup = state.IsSetupRequired ||
-            (_tenantAccessor.IsResolved && !await _dbContext.PasskeyCredentials.AnyAsync());
-        if (!tenantNeedsSetup)
-        {
-            return Problem(detail: "Setup mode is not active", statusCode: 403, title: "Forbidden");
-        }
-
-        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.DisplayName))
-        {
-            return Problem(detail: "Username and display name are required", statusCode: 400, title: "Bad Request");
-        }
-
         // Use the resolved tenant (multi-tenant) or fall back to the default tenant (single-tenant)
         var tenantId = _tenantAccessor.IsResolved
             ? _tenantAccessor.TenantId
@@ -567,6 +555,24 @@ public class PasskeyController : ControllerBase
         if (tenantId == Guid.Empty)
         {
             return Problem(detail: "Tenant not found — restart the application", statusCode: 500, title: "Server Error");
+        }
+
+        // Single-tenant: RecoveryModeState.IsSetupRequired is set at startup
+        // Multi-tenant: no tenant members have passkey credentials yet
+        var tenantHasPasskeys = _tenantAccessor.IsResolved &&
+            await _dbContext.TenantMembers
+                .Where(m => m.TenantId == tenantId)
+                .AnyAsync(m => _dbContext.PasskeyCredentials.Any(c => c.SubjectId == m.SubjectId));
+        var tenantNeedsSetup = state.IsSetupRequired ||
+            (_tenantAccessor.IsResolved && !tenantHasPasskeys);
+        if (!tenantNeedsSetup)
+        {
+            return Problem(detail: "Setup mode is not active", statusCode: 403, title: "Forbidden");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.DisplayName))
+        {
+            return Problem(detail: "Username and display name are required", statusCode: 400, title: "Bad Request");
         }
 
         // Idempotent: reuse existing setup subject if the WebAuthn ceremony
@@ -640,18 +646,6 @@ public class PasskeyController : ControllerBase
         [FromBody] SetupCompleteRequest request,
         [FromServices] RecoveryModeState state)
     {
-        var tenantNeedsSetup = state.IsSetupRequired ||
-            (_tenantAccessor.IsResolved && !await _dbContext.PasskeyCredentials.AnyAsync());
-        if (!tenantNeedsSetup)
-        {
-            return Problem(detail: "Setup mode is not active", statusCode: 403, title: "Forbidden");
-        }
-
-        if (string.IsNullOrEmpty(request.ChallengeToken))
-        {
-            return Problem(detail: "Challenge token is required", statusCode: 400, title: "Bad Request");
-        }
-
         var tenantId = _tenantAccessor.IsResolved
             ? _tenantAccessor.TenantId
             : (await _dbContext.Tenants.IgnoreQueryFilters().FirstOrDefaultAsync(t => t.IsDefault))?.Id
@@ -660,6 +654,22 @@ public class PasskeyController : ControllerBase
         if (tenantId == Guid.Empty)
         {
             return Problem(detail: "Tenant not found", statusCode: 500, title: "Server Error");
+        }
+
+        var tenantHasPasskeys = _tenantAccessor.IsResolved &&
+            await _dbContext.TenantMembers
+                .Where(m => m.TenantId == tenantId)
+                .AnyAsync(m => _dbContext.PasskeyCredentials.Any(c => c.SubjectId == m.SubjectId));
+        var tenantNeedsSetup = state.IsSetupRequired ||
+            (_tenantAccessor.IsResolved && !tenantHasPasskeys);
+        if (!tenantNeedsSetup)
+        {
+            return Problem(detail: "Setup mode is not active", statusCode: 403, title: "Forbidden");
+        }
+
+        if (string.IsNullOrEmpty(request.ChallengeToken))
+        {
+            return Problem(detail: "Challenge token is required", statusCode: 400, title: "Bad Request");
         }
 
         try

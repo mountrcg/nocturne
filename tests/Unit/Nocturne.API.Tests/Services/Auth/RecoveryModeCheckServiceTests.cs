@@ -89,7 +89,6 @@ public class RecoveryModeCheckServiceTests : IDisposable
         _dbContext.PasskeyCredentials.Add(new PasskeyCredentialEntity
         {
             Id = Guid.CreateVersion7(),
-            TenantId = Guid.CreateVersion7(),
             SubjectId = subjectId,
             CredentialId = new byte[] { 1, 2, 3 },
             PublicKey = new byte[] { 4, 5, 6 },

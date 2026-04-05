@@ -635,11 +635,17 @@ public class PasskeyControllerTests : IDisposable
         _dbContext.PasskeyCredentials.Add(new PasskeyCredentialEntity
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
             SubjectId = subjectId,
             CredentialId = System.Text.Encoding.UTF8.GetBytes("existing-cred"),
             PublicKey = [],
             SignCount = 0,
+        });
+        // Link subject to tenant so the membership-based check finds the passkey
+        _dbContext.TenantMembers.Add(new TenantMemberEntity
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenantId,
+            SubjectId = subjectId,
         });
         await _dbContext.SaveChangesAsync();
 
@@ -647,8 +653,6 @@ public class PasskeyControllerTests : IDisposable
         var request = new SetupOptionsRequest { Username = "admin", DisplayName = "Admin" };
 
         _tenantAccessor.Setup(t => t.IsResolved).Returns(true);
-        // Set the DbContext tenant so the query filter sees the seeded credential
-        _dbContext.TenantId = _tenantId;
 
         // Act
         var result = await _controller.SetupOptions(request, state);

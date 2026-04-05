@@ -41,9 +41,9 @@ public class PasskeyServiceTests
         var otherSubjectId = Guid.CreateVersion7();
 
         _dbContext.PasskeyCredentials.AddRange(
-            CreateCredentialEntity(_subjectId, _tenantId, "Key 1"),
-            CreateCredentialEntity(_subjectId, _tenantId, "Key 2"),
-            CreateCredentialEntity(otherSubjectId, _tenantId, "Other User Key"));
+            CreateCredentialEntity(_subjectId,"Key 1"),
+            CreateCredentialEntity(_subjectId,"Key 2"),
+            CreateCredentialEntity(otherSubjectId,"Other User Key"));
         await _dbContext.SaveChangesAsync();
 
         var service = CreateService();
@@ -71,10 +71,10 @@ public class PasskeyServiceTests
     [Trait("Category", "Unit")]
     public async Task GetCredentialsAsync_OrdersByCreatedAtDescending()
     {
-        var older = CreateCredentialEntity(_subjectId, _tenantId, "Older");
+        var older = CreateCredentialEntity(_subjectId,"Older");
         older.CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
-        var newer = CreateCredentialEntity(_subjectId, _tenantId, "Newer");
+        var newer = CreateCredentialEntity(_subjectId,"Newer");
         newer.CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
         _dbContext.PasskeyCredentials.AddRange(older, newer);
@@ -97,9 +97,9 @@ public class PasskeyServiceTests
     public async Task GetCredentialCountAsync_ReturnsCorrectCount()
     {
         _dbContext.PasskeyCredentials.AddRange(
-            CreateCredentialEntity(_subjectId, _tenantId),
-            CreateCredentialEntity(_subjectId, _tenantId),
-            CreateCredentialEntity(_subjectId, _tenantId));
+            CreateCredentialEntity(_subjectId),
+            CreateCredentialEntity(_subjectId),
+            CreateCredentialEntity(_subjectId));
         await _dbContext.SaveChangesAsync();
 
         var service = CreateService();
@@ -127,8 +127,8 @@ public class PasskeyServiceTests
         var otherSubjectId = Guid.CreateVersion7();
 
         _dbContext.PasskeyCredentials.AddRange(
-            CreateCredentialEntity(_subjectId, _tenantId),
-            CreateCredentialEntity(otherSubjectId, _tenantId));
+            CreateCredentialEntity(_subjectId),
+            CreateCredentialEntity(otherSubjectId));
         await _dbContext.SaveChangesAsync();
 
         var service = CreateService();
@@ -199,8 +199,8 @@ public class PasskeyServiceTests
     [Trait("Category", "Unit")]
     public async Task RemoveCredentialAsync_RemovesCredentialWhenMultipleExist()
     {
-        var cred1 = CreateCredentialEntity(_subjectId, _tenantId, "Key 1");
-        var cred2 = CreateCredentialEntity(_subjectId, _tenantId, "Key 2");
+        var cred1 = CreateCredentialEntity(_subjectId,"Key 1");
+        var cred2 = CreateCredentialEntity(_subjectId,"Key 2");
         _dbContext.PasskeyCredentials.AddRange(cred1, cred2);
         await _dbContext.SaveChangesAsync();
 
@@ -209,7 +209,7 @@ public class PasskeyServiceTests
         await service.RemoveCredentialAsync(cred1.Id, _subjectId, _tenantId);
 
         var remaining = _dbContext.PasskeyCredentials
-            .Where(c => c.SubjectId == _subjectId && c.TenantId == _tenantId)
+            .Where(c => c.SubjectId == _subjectId)
             .ToList();
         remaining.Should().HaveCount(1);
         remaining[0].Id.Should().Be(cred2.Id);
@@ -233,7 +233,7 @@ public class PasskeyServiceTests
     {
         // Guard logic has been moved to the controller via SubjectService.HasAlternativeAuthMethodAsync.
         // PasskeyService now simply removes the credential without checking alternatives.
-        var cred = CreateCredentialEntity(_subjectId, _tenantId);
+        var cred = CreateCredentialEntity(_subjectId);
         _dbContext.PasskeyCredentials.Add(cred);
         await _dbContext.SaveChangesAsync();
 
@@ -242,7 +242,7 @@ public class PasskeyServiceTests
         await service.RemoveCredentialAsync(cred.Id, _subjectId, _tenantId);
 
         var remaining = _dbContext.PasskeyCredentials
-            .Where(c => c.SubjectId == _subjectId && c.TenantId == _tenantId)
+            .Where(c => c.SubjectId == _subjectId)
             .ToList();
         remaining.Should().BeEmpty();
     }
@@ -252,7 +252,7 @@ public class PasskeyServiceTests
     public async Task RemoveCredentialAsync_ThrowsWhenCredentialBelongsToDifferentSubject()
     {
         var otherSubjectId = Guid.CreateVersion7();
-        var cred = CreateCredentialEntity(otherSubjectId, _tenantId);
+        var cred = CreateCredentialEntity(otherSubjectId);
         _dbContext.PasskeyCredentials.Add(cred);
         await _dbContext.SaveChangesAsync();
 
@@ -275,12 +275,12 @@ public class PasskeyServiceTests
         // Add 20 credentials
         for (var i = 0; i < 20; i++)
         {
-            _dbContext.PasskeyCredentials.Add(CreateCredentialEntity(_subjectId, _tenantId, $"Key {i}"));
+            _dbContext.PasskeyCredentials.Add(CreateCredentialEntity(_subjectId,$"Key {i}"));
         }
         await _dbContext.SaveChangesAsync();
 
         var count = await _dbContext.PasskeyCredentials
-            .CountAsync(c => c.SubjectId == _subjectId && c.TenantId == _tenantId);
+            .CountAsync(c => c.SubjectId == _subjectId);
         count.Should().Be(20);
     }
 
@@ -293,11 +293,11 @@ public class PasskeyServiceTests
         // Add 20 credentials for a different subject
         for (var i = 0; i < 20; i++)
         {
-            _dbContext.PasskeyCredentials.Add(CreateCredentialEntity(otherSubjectId, _tenantId));
+            _dbContext.PasskeyCredentials.Add(CreateCredentialEntity(otherSubjectId));
         }
 
         // Add 1 for our subject
-        _dbContext.PasskeyCredentials.Add(CreateCredentialEntity(_subjectId, _tenantId));
+        _dbContext.PasskeyCredentials.Add(CreateCredentialEntity(_subjectId));
         await _dbContext.SaveChangesAsync();
 
         var service = CreateService();
@@ -393,12 +393,11 @@ public class PasskeyServiceTests
     }
 
     private static PasskeyCredentialEntity CreateCredentialEntity(
-        Guid subjectId, Guid tenantId, string? label = null)
+        Guid subjectId, string? label = null)
     {
         return new PasskeyCredentialEntity
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
             SubjectId = subjectId,
             CredentialId = Guid.CreateVersion7().ToByteArray(),
             PublicKey = [1, 2, 3, 4],

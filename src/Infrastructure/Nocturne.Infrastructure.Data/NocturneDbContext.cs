@@ -2557,7 +2557,7 @@ public class NocturneDbContext : DbContext
         // PasskeyCredentialEntity
         modelBuilder.Entity<PasskeyCredentialEntity>(entity =>
         {
-            entity.HasIndex(e => new { e.TenantId, e.CredentialId }).IsUnique();
+            entity.HasIndex(e => e.CredentialId).IsUnique();
             entity.HasOne(e => e.Subject).WithMany(s => s.PasskeyCredentials).HasForeignKey(e => e.SubjectId);
         });
 

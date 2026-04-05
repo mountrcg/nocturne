@@ -3,11 +3,11 @@ namespace Nocturne.Infrastructure.Data.Tests.Entities;
 public class PasskeyCredentialEntityTests
 {
     [Fact]
-    public void Should_Implement_ITenantScoped()
+    public void Should_Not_Implement_ITenantScoped()
     {
         var entity = new PasskeyCredentialEntity();
 
-        entity.Should().BeAssignableTo<ITenantScoped>();
+        entity.Should().NotBeAssignableTo<ITenantScoped>();
     }
 
     [Fact]

@@ -105,11 +105,16 @@ public class TenantSetupMiddlewareTests : IDisposable
         _dbContext.PasskeyCredentials.Add(new PasskeyCredentialEntity
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
             SubjectId = subjectId,
             CredentialId = System.Text.Encoding.UTF8.GetBytes("cred-id"),
             PublicKey = [],
             SignCount = 0,
+        });
+        _dbContext.TenantMembers.Add(new TenantMemberEntity
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenantId,
+            SubjectId = subjectId,
         });
         await _dbContext.SaveChangesAsync();
 
@@ -180,7 +185,6 @@ public class TenantSetupMiddlewareTests : IDisposable
         _dbContext.PasskeyCredentials.Add(new PasskeyCredentialEntity
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
             SubjectId = healthySubjectId,
             CredentialId = System.Text.Encoding.UTF8.GetBytes("cred-1"),
             PublicKey = [],
@@ -251,7 +255,6 @@ public class TenantSetupMiddlewareTests : IDisposable
         _dbContext.PasskeyCredentials.Add(new PasskeyCredentialEntity
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
             SubjectId = subjectId,
             CredentialId = System.Text.Encoding.UTF8.GetBytes("cred-1"),
             PublicKey = [],
@@ -310,7 +313,6 @@ public class TenantSetupMiddlewareTests : IDisposable
         _dbContext.PasskeyCredentials.Add(new PasskeyCredentialEntity
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
             SubjectId = subjectId,
             CredentialId = System.Text.Encoding.UTF8.GetBytes("cred-1"),
             PublicKey = [],
