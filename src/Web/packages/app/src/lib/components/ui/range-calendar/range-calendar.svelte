@@ -1,6 +1,19 @@
 <script lang="ts">
 	import { RangeCalendar as RangeCalendarPrimitive } from "bits-ui";
-	import * as RangeCalendar from "./index.js";
+	import Cell from "./range-calendar-cell.svelte";
+	import Day from "./range-calendar-day.svelte";
+	import Grid from "./range-calendar-grid.svelte";
+	import Header from "./range-calendar-header.svelte";
+	import Months from "./range-calendar-months.svelte";
+	import GridRow from "./range-calendar-grid-row.svelte";
+	import GridBody from "./range-calendar-grid-body.svelte";
+	import GridHead from "./range-calendar-grid-head.svelte";
+	import HeadCell from "./range-calendar-head-cell.svelte";
+	import NextButton from "./range-calendar-next-button.svelte";
+	import PrevButton from "./range-calendar-prev-button.svelte";
+	import Caption from "./range-calendar-caption.svelte";
+	import Nav from "./range-calendar-nav.svelte";
+	import Month from "./range-calendar-month.svelte";
 	import { cn, type WithoutChildrenOrChild } from "$lib/utils";
 	import type { ButtonVariant } from "$lib/components/ui/button/index.js";
 	import type { Snippet } from "svelte";
@@ -55,15 +68,15 @@
 	{...restProps}
 >
 	{#snippet children({ months, weekdays })}
-		<RangeCalendar.Months>
-			<RangeCalendar.Nav>
-				<RangeCalendar.PrevButton variant={buttonVariant} />
-				<RangeCalendar.NextButton variant={buttonVariant} />
-			</RangeCalendar.Nav>
+		<Months>
+			<Nav>
+				<PrevButton variant={buttonVariant} />
+				<NextButton variant={buttonVariant} />
+			</Nav>
 			{#each months as month, monthIndex (month)}
-				<RangeCalendar.Month>
-					<RangeCalendar.Header>
-						<RangeCalendar.Caption
+				<Month>
+					<Header>
+						<Caption
 							{captionLayout}
 							months={monthsProp}
 							{monthFormat}
@@ -74,39 +87,39 @@
 							{locale}
 							{monthIndex}
 						/>
-					</RangeCalendar.Header>
+					</Header>
 
-					<RangeCalendar.Grid>
-						<RangeCalendar.GridHead>
-							<RangeCalendar.GridRow class="select-none">
+					<Grid>
+						<GridHead>
+							<GridRow class="select-none">
 								{#each weekdays as weekday (weekday)}
-									<RangeCalendar.HeadCell>
+									<HeadCell>
 										{weekday.slice(0, 2)}
-									</RangeCalendar.HeadCell>
+									</HeadCell>
 								{/each}
-							</RangeCalendar.GridRow>
-						</RangeCalendar.GridHead>
-						<RangeCalendar.GridBody>
+							</GridRow>
+						</GridHead>
+						<GridBody>
 							{#each month.weeks as weekDates (weekDates)}
-								<RangeCalendar.GridRow class="mt-2 w-full">
+								<GridRow class="mt-2 w-full">
 									{#each weekDates as date (date)}
-										<RangeCalendar.Cell {date} month={month.value}>
+										<Cell {date} month={month.value}>
 											{#if day}
 												{@render day({
 													day: date,
 													outsideMonth: !isEqualMonth(date, month.value),
 												})}
 											{:else}
-												<RangeCalendar.Day />
+												<Day />
 											{/if}
-										</RangeCalendar.Cell>
+										</Cell>
 									{/each}
-								</RangeCalendar.GridRow>
+								</GridRow>
 							{/each}
-						</RangeCalendar.GridBody>
-					</RangeCalendar.Grid>
-				</RangeCalendar.Month>
+						</GridBody>
+					</Grid>
+				</Month>
 			{/each}
-		</RangeCalendar.Months>
+		</Months>
 	{/snippet}
 </RangeCalendarPrimitive.Root>

@@ -8,7 +8,7 @@ const entriesSchema = z.object({
   }),
 });
 
-export const getEntries = query(entriesSchema, async (props) => {
+const getEntries = query(entriesSchema, async (props) => {
   const { locals } = getRequestEvent();
   const { apiClient } = locals;
 
@@ -23,7 +23,7 @@ export const getEntries = query(entriesSchema, async (props) => {
   return response.data ?? [];
 });
 
-export const getBolusesAndCarbs = query(entriesSchema, async (props) => {
+const getBolusesAndCarbs = query(entriesSchema, async (props) => {
   const { locals } = getRequestEvent();
   const { apiClient } = locals;
 
@@ -41,7 +41,7 @@ export const getBolusesAndCarbs = query(entriesSchema, async (props) => {
   };
 });
 
-export const getStats = query(entriesSchema, async (props) => {
+const getStats = query(entriesSchema, async (props) => {
   const { locals } = getRequestEvent();
   const { apiClient } = locals;
 
@@ -75,7 +75,7 @@ const treatmentIdSchema = z.object({
  * Look up a v4 entry record by treatmentId, trying each entity type sequentially.
  * Returns the matching record or null if not found in any collection.
  */
-export const getEntryByTreatmentId = query(treatmentIdSchema, async ({ treatmentId }) => {
+const getEntryByTreatmentId = query(treatmentIdSchema, async ({ treatmentId }) => {
   const { locals } = getRequestEvent();
   const { apiClient } = locals;
 

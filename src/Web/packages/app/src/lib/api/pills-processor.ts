@@ -102,7 +102,7 @@ export interface ProcessedPillsData {
 /**
  * Process device status and v4 records into pill data
  */
-export function processPillsData(
+function processPillsData(
 	deviceStatuses: DeviceStatus[],
 	boluses: Bolus[],
 	carbIntakes: CarbIntake[],
@@ -126,7 +126,7 @@ export function processPillsData(
 /**
  * Process IOB data from device status and boluses
  */
-export function processIOB(
+function processIOB(
 	deviceStatuses: DeviceStatus[],
 	boluses: Bolus[],
 	now: number,
@@ -240,7 +240,7 @@ export function processIOB(
 /**
  * Process COB data from device status and carb intakes
  */
-export function processCOB(
+function processCOB(
 	deviceStatuses: DeviceStatus[],
 	carbIntakes: CarbIntake[],
 	now: number,
@@ -373,7 +373,7 @@ export function processCOB(
 /**
  * Process CAGE data from device events
  */
-export function processCAGE(
+function processCAGE(
 	deviceEvents: DeviceEvent[],
 	now: number,
 	config: Partial<PillsProcessorConfig> = {}
@@ -440,7 +440,7 @@ export function processCAGE(
 /**
  * Process SAGE data from device events
  */
-export function processSAGE(
+function processSAGE(
 	deviceEvents: DeviceEvent[],
 	now: number,
 	config: Partial<PillsProcessorConfig> = {}
@@ -575,7 +575,7 @@ function getScheduledBasalRate(profile: Profile | null, now: number): { rate: nu
 /**
  * Process Basal data from device status and profile
  */
-export function processBasal(
+function processBasal(
 	deviceStatuses: DeviceStatus[],
 	profile: Profile | null,
 	now: number,
@@ -676,7 +676,7 @@ export function processBasal(
 /**
  * Process Loop status from device status
  */
-export function processLoop(
+function processLoop(
 	deviceStatuses: DeviceStatus[],
 	now: number,
 	_units: string,

@@ -31,7 +31,7 @@ export interface BotApiClient {
   };
 }
 
-export interface PaginatedSensorGlucose {
+interface PaginatedSensorGlucose {
   data?: SensorGlucoseReading[];
   pagination?: { page?: number; pageSize?: number; totalCount?: number; totalPages?: number };
 }

@@ -52,7 +52,7 @@ export interface PredictionData {
  * Get glucose predictions based on current data.
  * Returns predicted glucose values with timestamps for charting.
  */
-export const getPredictions = query(getPredictionsSchema, async (props) => {
+const getPredictions = query(getPredictionsSchema, async (props) => {
 	const { locals } = getRequestEvent();
 	const { apiClient } = locals;
 
@@ -100,7 +100,7 @@ export const getPredictions = query(getPredictionsSchema, async (props) => {
 /**
  * Get the status of the prediction service
  */
-export const getPredictionStatus = query(z.object({}), async () => {
+const getPredictionStatus = query(z.object({}), async () => {
 	const { locals } = getRequestEvent();
 	const { apiClient } = locals;
 

@@ -12,7 +12,6 @@
     "check": "pnpm --recursive check",
     "test": "pnpm --recursive test",
     "clean": "pnpm --recursive clean && rm -rf node_modules",
-    "transform-api-client": "node --experimental-transform-types utils/transformApiClient/index.ts",
     "generate-api-client": "cd ../API/Nocturne.API && nswag run nswag.json",
     "generate-zod-schemas": "node --experimental-transform-types utils/generateZodSchemas/index.ts",
     "generate-remote-functions": "node packages/app/node_modules/openapi-remote-codegen/dist/index.js",

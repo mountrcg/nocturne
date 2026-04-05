@@ -57,7 +57,7 @@ function calculateDateRange(input?: DateRangeInput): { startDate: Date; endDate:
 /**
  * Get sensor glucose readings for a date range
  */
-export const getEntries = query(
+const getEntries = query(
 	DateRangeSchema.optional(),
 	async (input) => {
 		const { locals } = getRequestEvent();
@@ -80,7 +80,7 @@ export const getEntries = query(
 /**
  * Get boluses and carb intakes for a date range with pagination support
  */
-export const getBolusesAndCarbs = query(
+const getBolusesAndCarbs = query(
 	DateRangeSchema.optional(),
 	async (input) => {
 		const { locals } = getRequestEvent();
@@ -146,7 +146,7 @@ export const getBolusesAndCarbs = query(
 /**
  * Get glucose analysis for entries, boluses, and carb intakes
  */
-export const getAnalysis = query(
+const getAnalysis = query(
 	z.object({
 		entries: z.array(z.any()),
 		boluses: z.array(z.any()),
@@ -169,7 +169,7 @@ export const getAnalysis = query(
 /**
  * Get multi-period statistics summary
  */
-export const getSummary = query(async () => {
+const getSummary = query(async () => {
 	const { locals } = getRequestEvent();
 	const { apiClient } = locals;
 	return apiClient.statistics.getMultiPeriodStatistics();

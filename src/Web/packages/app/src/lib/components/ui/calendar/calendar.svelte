@@ -1,6 +1,17 @@
 <script lang="ts">
   import { Calendar as CalendarPrimitive } from "bits-ui";
-  import * as Calendar from "./index.js";
+  import Cell from "./calendar-cell.svelte";
+  import Day from "./calendar-day.svelte";
+  import Grid from "./calendar-grid.svelte";
+  import Header from "./calendar-header.svelte";
+  import Months from "./calendar-months.svelte";
+  import GridRow from "./calendar-grid-row.svelte";
+  import Heading from "./calendar-heading.svelte";
+  import GridBody from "./calendar-grid-body.svelte";
+  import GridHead from "./calendar-grid-head.svelte";
+  import HeadCell from "./calendar-head-cell.svelte";
+  import NextButton from "./calendar-next-button.svelte";
+  import PrevButton from "./calendar-prev-button.svelte";
   import { cn, type WithoutChildrenOrChild } from "$lib/utils";
 
   let {
@@ -26,36 +37,36 @@ get along, so we shut typescript up by casting `value` to `never`.
   {...restProps}
 >
   {#snippet children({ months, weekdays })}
-    <Calendar.Header>
-      <Calendar.PrevButton />
-      <Calendar.Heading />
-      <Calendar.NextButton />
-    </Calendar.Header>
-    <Calendar.Months>
+    <Header>
+      <PrevButton />
+      <Heading />
+      <NextButton />
+    </Header>
+    <Months>
       {#each months as month (month)}
-        <Calendar.Grid>
-          <Calendar.GridHead>
-            <Calendar.GridRow class="flex">
+        <Grid>
+          <GridHead>
+            <GridRow class="flex">
               {#each weekdays as weekday (weekday)}
-                <Calendar.HeadCell>
+                <HeadCell>
                   {weekday.slice(0, 2)}
-                </Calendar.HeadCell>
+                </HeadCell>
               {/each}
-            </Calendar.GridRow>
-          </Calendar.GridHead>
-          <Calendar.GridBody>
+            </GridRow>
+          </GridHead>
+          <GridBody>
             {#each month.weeks as weekDates (weekDates)}
-              <Calendar.GridRow class="mt-2 w-full">
+              <GridRow class="mt-2 w-full">
                 {#each weekDates as date (date)}
-                  <Calendar.Cell {date} month={month.value}>
-                    <Calendar.Day />
-                  </Calendar.Cell>
+                  <Cell {date} month={month.value}>
+                    <Day />
+                  </Cell>
                 {/each}
-              </Calendar.GridRow>
+              </GridRow>
             {/each}
-          </Calendar.GridBody>
-        </Calendar.Grid>
+          </GridBody>
+        </Grid>
       {/each}
-    </Calendar.Months>
+    </Months>
   {/snippet}
 </CalendarPrimitive.Root>

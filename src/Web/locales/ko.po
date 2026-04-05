@@ -238,6 +238,7 @@ msgstr ""
 #: src/routes/settings/api-access/+page.svelte
 #: src/routes/settings/connectors/+page.svelte
 #: src/routes/settings/connectors/+page.svelte
+#: src/routes/settings/connectors/+page.svelte
 #: src/routes/settings/members/+page.svelte
 #: src/routes/settings/members/+page.svelte
 #: src/routes/settings/members/+page.svelte
@@ -369,6 +370,7 @@ msgstr ""
 #: src/lib/stores/settings-store.svelte.ts
 #: src/routes/settings/admin/+page.svelte
 #: src/routes/settings/connectors/+page.svelte
+#: src/routes/settings/nightscout-transition/+page.svelte
 #: src/routes/settings/services/+page.svelte
 msgid "Never"
 msgstr ""
@@ -887,6 +889,7 @@ msgstr ""
 #: src/routes/reports/year-overview/+page.svelte
 #: src/routes/settings/alerts/setup/+page.svelte
 #: src/routes/settings/appearance/+page.svelte
+#: src/routes/settings/nightscout-transition/+page.svelte
 msgid "Low"
 msgstr ""
 
@@ -909,6 +912,7 @@ msgstr ""
 #: src/routes/reports/year-overview/+page.svelte
 #: src/routes/settings/alerts/setup/+page.svelte
 #: src/routes/settings/appearance/+page.svelte
+#: src/routes/settings/nightscout-transition/+page.svelte
 msgid "High"
 msgstr ""
 
@@ -1275,6 +1279,8 @@ msgstr ""
 #: src/routes/settings/members/+page.svelte
 #: src/routes/settings/migration/+page.svelte
 #: src/routes/settings/migration/+page.svelte
+#: src/routes/settings/nightscout-transition/+page.svelte
+#: src/routes/settings/nightscout-transition/+page.svelte
 #: src/routes/settings/setup/uploaders/+page.svelte
 #: src/routes/settings/sharing/+page.svelte
 #: src/routes/settings/sharing/+page.svelte
@@ -2051,6 +2057,7 @@ msgstr ""
 #: src/routes/settings/connectors/+page.svelte
 #: src/routes/settings/connectors/+page.svelte
 #: src/routes/settings/migration/+page.svelte
+#: src/routes/settings/nightscout-transition/+page.svelte
 #: src/routes/settings/services/+page.svelte
 #: src/routes/settings/services/+page.svelte
 #: src/routes/settings/services/+page.svelte
@@ -5206,6 +5213,7 @@ msgstr ""
 #: src/routes/calendar/+page.svelte
 #: src/routes/calendar/+page.svelte
 #: src/routes/calendar/+page.svelte
+#: src/routes/settings/nightscout-transition/+page.svelte
 #: src/routes/settings/trackers/+page.svelte
 msgid "<0/> Complete"
 msgstr ""
@@ -6524,6 +6532,7 @@ msgstr ""
 #: src/lib/components/clock-builder/TextStyleControls.svelte
 #: src/lib/components/treatments/TreatmentFoodSelectorDialog.svelte
 #: src/routes/reports/data-quality/compression-lows/+page.svelte
+#: src/routes/settings/nightscout-transition/+page.svelte
 msgid "Medium"
 msgstr ""
 
@@ -7657,6 +7666,7 @@ msgstr ""
 #: src/lib/components/setup/WizardShell.svelte
 #: src/routes/clock/[face]/+page.svelte
 #: src/routes/clock/[id]/+page.svelte
+#: src/routes/settings/setup/migrate/nightscout/+page.svelte
 msgid "<0/> Back"
 msgstr ""
 
@@ -7850,6 +7860,7 @@ msgid "Minor"
 msgstr ""
 
 #: src/routes/compatibility/[id]/+page.svelte
+#: src/routes/settings/nightscout-transition/+page.svelte
 msgid "Discrepancies"
 msgstr ""
 
@@ -11290,6 +11301,7 @@ msgid "Connector health and data metrics"
 msgstr ""
 
 #: src/routes/settings/connectors/+page.svelte
+#: src/routes/settings/nightscout-transition/+page.svelte
 #: src/routes/settings/services/+page.svelte
 msgid "<0/> Healthy"
 msgstr ""
@@ -12646,6 +12658,7 @@ msgstr ""
 #: src/lib/components/SiteFooter.svelte
 #: src/lib/components/SiteHeader.svelte
 #: src/lib/components/SiteHeader.svelte
+#: src/routes/settings/setup/migrate/+page.svelte
 msgid "Get Started"
 msgstr ""
 
@@ -12771,6 +12784,7 @@ msgstr ""
 msgid "Configure Your Nocturne Instance"
 msgstr ""
 
+#: src/routes/settings/setup/migrate/+page.svelte
 #: src/routes/setup/+page.svelte
 msgid "Choose how you'd like to set up Nocturne"
 msgstr ""
@@ -17033,6 +17047,7 @@ msgid "No milestones found"
 msgstr ""
 
 #: src/routes/roadmap/+page.svelte
+#: src/routes/settings/nightscout-transition/+page.svelte
 msgid "<0/> In Progress"
 msgstr ""
 
@@ -18100,6 +18115,7 @@ msgstr ""
 
 #: src/lib/components/connectors/ConnectorSetup.svelte
 #: src/lib/components/settings/DataSourceRow.svelte
+#: src/routes/settings/connectors/+page.svelte
 msgid "<0/> Configured"
 msgstr ""
 
@@ -21700,6 +21716,8 @@ msgid ""
 msgstr ""
 
 #: src/routes/settings/account/+page.svelte
+#: src/routes/settings/connectors/+page.svelte
+#: src/routes/settings/connectors/+page.svelte
 #: src/routes/settings/security/+page.svelte
 msgid "Regenerate"
 msgstr ""
@@ -23001,4 +23019,245 @@ msgstr ""
 msgid ""
 "Optionally create treatment events when this tracker starts or completes.\n"
 "This maintains compatibility with existing CAGE/SAGE pills."
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid "API secret regenerated successfully"
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid "Failed to regenerate API secret"
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid "<0/> API Secret"
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid "Manage the API secret used by Nightscout-compatible uploaders and CGM apps"
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid "<0/> Checking status..."
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid "<0/> Not configured"
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+#: src/routes/settings/connectors/+page.svelte
+msgid "Generate"
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid ""
+"Your API secret is configured. Regenerating it will invalidate the current secret\n"
+"and disconnect any uploaders using it."
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid ""
+"No API secret is configured. Generate one to allow Nightscout-compatible\n"
+"uploaders to send data to your site."
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid "Save your new API secret now"
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid "This is the only time it will be shown. Copy it and configure it in your uploader app."
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid "Regenerate API Secret?"
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid "Generate API Secret?"
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid ""
+"This will replace your current API secret. Any uploaders or apps using the\n"
+"current secret will stop working until reconfigured with the new secret."
+msgstr ""
+
+#: src/routes/settings/connectors/+page.svelte
+msgid ""
+"This will generate a new API secret that you can use to authenticate\n"
+"Nightscout-compatible uploaders and CGM apps."
+msgstr ""
+
+#: src/routes/settings/setup/migrate/nightscout/+page.svelte
+msgid "Nightscout Migration - Setup - Nocturne"
+msgstr ""
+
+#: src/routes/settings/setup/migrate/nightscout/+page.svelte
+msgid "Migration started successfully"
+msgstr ""
+
+#: src/routes/settings/setup/migrate/nightscout/+page.svelte
+msgid ""
+"Your Nightscout data is being synced. You can continue setting up\n"
+"Nocturne while the sync runs in the background."
+msgstr ""
+
+#: src/routes/settings/setup/migrate/nightscout/+page.svelte
+msgid "Continue to setup <0/>"
+msgstr ""
+
+#: src/routes/settings/setup/migrate/nightscout/+page.svelte
+msgid "Connect to Nightscout"
+msgstr ""
+
+#: src/routes/settings/setup/migrate/nightscout/+page.svelte
+msgid "Enter your Nightscout URL and API secret to begin migrating your data"
+msgstr ""
+
+#: src/routes/settings/setup/migrate/+page.svelte
+msgid "Migration - Setup - Nocturne"
+msgstr ""
+
+#: src/routes/settings/setup/migrate/+page.svelte
+msgid "Starting Fresh"
+msgstr ""
+
+#: src/routes/settings/setup/migrate/+page.svelte
+msgid "Set up Nocturne from scratch with a step-by-step wizard"
+msgstr ""
+
+#: src/routes/settings/setup/migrate/+page.svelte
+msgid "Begin setup <0/>"
+msgstr ""
+
+#: src/routes/settings/setup/migrate/+page.svelte
+msgid "Migrating from Nightscout"
+msgstr ""
+
+#: src/routes/settings/setup/migrate/+page.svelte
+msgid ""
+"Copy your existing data and keep both systems in sync during\n"
+"transition"
+msgstr ""
+
+#: src/routes/settings/setup/migrate/+page.svelte
+msgid "Start migration <0/>"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Failed to load Nightscout transition status"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Safe to Disconnect"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Almost Ready"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Not Ready"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "No Data"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Nightscout Transition - Settings - Nocturne"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Nightscout Transition"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Monitor your migration from Nightscout and check disconnect readiness"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Failed to load transition status"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "<0/> Migration Status"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Record counts by data type from your Nightscout instance"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "No migration data available yet."
+msgstr ""
+
+#. placeholder {0}: formatTimestamp(status.migration.lastSyncTime)
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Last sync: {0}"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "<0/> Write-Back Health (Last 24 Hours)"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "<0/> Circuit Open"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Status of write-back operations to your Nightscout instance"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Requests"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Succeeded"
+msgstr ""
+
+#. placeholder {0}: formatTimestamp(status.writeBack.lastSuccessTime)
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Last successful write-back: {0}"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "<0/> API Compatibility"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Background comparison of Nocturne responses against your Nightscout instance"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Score"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Comparisons"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "<0/> Safe to Disconnect"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Recommendation on whether it is safe to stop using your Nightscout instance"
+msgstr ""
+
+#. placeholder {0}: status.recommendation.stabilityDaysRemaining
+#. placeholder {1}: status.recommendation.stabilityDaysRemaining === 1 ? 'day' : 'days'
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "{0} stability {1} remaining"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Blockers"
+msgstr ""
+
+#: src/routes/settings/nightscout-transition/+page.svelte
+msgid "Go to Connector Settings <0/>"
 msgstr ""

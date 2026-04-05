@@ -8,7 +8,7 @@ import {
 } from "$api";
 
 /** Creates reactive clinical form state bound to the patient record API */
-export function createClinicalState() {
+function createClinicalState() {
   const record = patientRemote.getPatientRecord();
 
   let diabetesType = $state<string>("");
@@ -87,7 +87,7 @@ export function createClinicalState() {
 }
 
 /** Creates reactive device list state with CRUD */
-export function createDeviceListState() {
+function createDeviceListState() {
   const devices = patientRemote.getDevices();
   const createForm = patientRemote.createDevice;
   const updateForm = patientRemote.updateDevice;
@@ -105,7 +105,7 @@ export function createDeviceListState() {
 }
 
 /** Creates reactive insulin list state with CRUD and catalog */
-export function createInsulinListState() {
+function createInsulinListState() {
   const insulins = patientRemote.getInsulins();
   const catalog = getInsulinCatalog(undefined);
   const createForm = patientRemote.createInsulin;

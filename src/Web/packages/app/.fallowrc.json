@@ -1,0 +1,40 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "ignoreDependencies": [
+    "@eslint/js",
+    "@wuchale/svelte",
+    "@wuchale/vite-plugin",
+    "vite-plugin-lingo",
+    "wuchale"
+  ],
+  "ignorePatterns": [
+    "src/lib/components/ui/**"
+  ],
+  "dynamicallyLoaded": [
+    "src/instrumentation.server.ts",
+    "wuchale.config.js"
+  ],
+  "rules": {
+    "unused-dependencies": "warn"
+  },
+  "regression": {
+    "baseline":     {
+      "totalIssues": 776,
+      "unusedFiles": 540,
+      "unusedExports": 27,
+      "unusedTypes": 69,
+      "unusedDependencies": 0,
+      "unusedDevDependencies": 0,
+      "unusedOptionalDependencies": 0,
+      "unusedEnumMembers": 0,
+      "unusedClassMembers": 17,
+      "unresolvedImports": 122,
+      "unlistedDependencies": 0,
+      "duplicateExports": 1,
+      "circularDependencies": 0,
+      "typeOnlyDependencies": 0,
+      "testOnlyDependencies": 0,
+      "boundaryViolations": 0
+    }
+  }
+}
