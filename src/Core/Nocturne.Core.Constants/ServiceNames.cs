@@ -101,6 +101,7 @@ public static class ServiceNames
         public const string TidepoolPrefix = "Parameters__Connectors__Tidepool__";
         public const string TConnectSyncPrefix = "Parameters__Connectors__TConnectSync__";
         public const string MyLifePrefix = "Parameters__Connectors__MyLife__";
+        public const string HomeAssistantPrefix = "Parameters__Connectors__HomeAssistant__";
     }
 
     /// <summary>
