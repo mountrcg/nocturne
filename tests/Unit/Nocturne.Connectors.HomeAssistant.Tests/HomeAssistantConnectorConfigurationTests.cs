@@ -1,6 +1,6 @@
 using FluentAssertions;
 using Nocturne.Connectors.Core.Models;
-using Nocturne.Connectors.HomeAssistant;
+using Nocturne.Connectors.HomeAssistant.Configurations;
 using Xunit;
 
 namespace Nocturne.Connectors.HomeAssistant.Tests;

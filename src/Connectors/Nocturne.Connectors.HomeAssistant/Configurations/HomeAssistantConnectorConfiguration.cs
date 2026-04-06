@@ -2,7 +2,7 @@ using Nocturne.Connectors.Core.Extensions;
 using Nocturne.Connectors.Core.Models;
 using Nocturne.Core.Constants;
 
-namespace Nocturne.Connectors.HomeAssistant;
+namespace Nocturne.Connectors.HomeAssistant.Configurations;
 
 [ConnectorRegistration(
     "HomeAssistant",
@@ -29,14 +29,14 @@ public class HomeAssistantConnectorConfiguration : BaseConnectorConfiguration
     }
 
     [ConnectorProperty(ConnectorPropertyKey.Url, Required = true)]
-    public string Url { get; init; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
 
-    public Dictionary<SyncDataType, string> EntityMappings { get; init; } = new();
+    public Dictionary<SyncDataType, string> EntityMappings { get; set; } = new();
 
     [ConnectorProperty(ConnectorPropertyKey.WriteBackEnabled)]
     public bool WriteBackEnabled { get; set; } = false;
 
-    public HashSet<WriteBackDataType> WriteBackTypes { get; init; } = [];
+    public HashSet<WriteBackDataType> WriteBackTypes { get; set; } = [];
 
     [ConnectorProperty(ConnectorPropertyKey.WebhookEnabled)]
     public bool WebhookEnabled { get; set; } = false;
