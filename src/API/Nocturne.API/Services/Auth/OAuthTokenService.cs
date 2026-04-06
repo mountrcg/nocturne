@@ -135,11 +135,12 @@ public class OAuthTokenService : IOAuthTokenService
         // Mark as redeemed
         authCode.RedeemedAt = DateTime.UtcNow;
 
-        // Create or update grant
+        // Create or update grant with 24-hour limit if specified
         var grant = await _grantService.CreateOrUpdateGrantAsync(
             authCode.ClientEntityId,
             authCode.SubjectId,
             authCode.Scopes,
+            limitTo24Hours: authCode.LimitTo24Hours,
             ct: ct
         );
 
@@ -215,9 +216,8 @@ public class OAuthTokenService : IOAuthTokenService
         };
 
         _db.OAuthRefreshTokens.Add(newTokenEntity);
-        await _db.SaveChangesAsync(ct);
 
-        // Set the rotation chain link
+        // Set the rotation chain link (UUID v7 assigns Id at Add() time, so it's available before save)
         oauthToken.ReplacedById = newTokenEntity.Id;
         await _db.SaveChangesAsync(ct);
 
@@ -421,7 +421,7 @@ public class OAuthTokenService : IOAuthTokenService
             roles,
             grant.Scopes,
             grant.ClientId,
-            false // LimitTo24Hours is now handled by tenant membership, not grants
+            grant.LimitTo24Hours
         );
 
         // Generate and store refresh token
