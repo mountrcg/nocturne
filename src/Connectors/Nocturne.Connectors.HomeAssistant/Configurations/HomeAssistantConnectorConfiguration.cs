@@ -31,6 +31,9 @@ public class HomeAssistantConnectorConfiguration : BaseConnectorConfiguration
     [ConnectorProperty(ConnectorPropertyKey.Url, Required = true)]
     public string Url { get; set; } = string.Empty;
 
+    [ConnectorProperty(ConnectorPropertyKey.AccessToken, Required = true, Secret = true)]
+    public string AccessToken { get; set; } = string.Empty;
+
     public Dictionary<SyncDataType, string> EntityMappings { get; set; } = new();
 
     [ConnectorProperty(ConnectorPropertyKey.WriteBackEnabled)]

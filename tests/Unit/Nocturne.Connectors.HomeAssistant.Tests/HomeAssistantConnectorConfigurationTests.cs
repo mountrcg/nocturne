@@ -19,11 +19,26 @@ public class HomeAssistantConnectorConfigurationTests
     }
 
     [Fact]
-    public void Validate_WithUrl_ShouldSucceed()
+    public void Validate_WithNoAccessToken_ShouldFail()
     {
         var config = new HomeAssistantConnectorConfiguration
         {
             Url = "http://homeassistant.local:8123"
+        };
+
+        var act = () => config.Validate();
+
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*AccessToken*");
+    }
+
+    [Fact]
+    public void Validate_WithUrlAndAccessToken_ShouldSucceed()
+    {
+        var config = new HomeAssistantConnectorConfiguration
+        {
+            Url = "http://homeassistant.local:8123",
+            AccessToken = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.test"
         };
 
         var act = () => config.Validate();

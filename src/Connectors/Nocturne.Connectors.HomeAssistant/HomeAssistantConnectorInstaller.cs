@@ -24,14 +24,16 @@ public class HomeAssistantConnectorInstaller : IConnectorInstaller
         // Connector service
         if (!string.IsNullOrEmpty(config.Url))
             services.AddHttpClient<HomeAssistantConnectorService>()
-                .ConfigureConnectorClient(config.Url);
+                .ConfigureConnectorClient(config.Url)
+                .AddBearerAuthorization(config.AccessToken);
         else
             services.AddHttpClient<HomeAssistantConnectorService>();
 
         // API client (typed HttpClient)
         if (!string.IsNullOrEmpty(config.Url))
             services.AddHttpClient<HomeAssistantApiClient>()
-                .ConfigureConnectorClient(config.Url);
+                .ConfigureConnectorClient(config.Url)
+                .AddBearerAuthorization(config.AccessToken);
         else
             services.AddHttpClient<HomeAssistantApiClient>();
 
