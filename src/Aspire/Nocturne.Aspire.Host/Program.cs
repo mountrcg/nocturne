@@ -181,6 +181,18 @@ class Program
         // Connectors run inside the API and need the instance key for secret encryption
         api.WithEnvironment(ServiceNames.ConfigKeys.InstanceKey, instanceKey);
 
+        // Forward root-level configuration sections to the API as environment variables.
+        // ASP.NET Core maps __ to : so "Oidc__Providers__0__Name" becomes "Oidc:Providers:0:Name".
+        foreach (var entry in builder.Configuration.AsEnumerable())
+        {
+            if (entry.Value is null) continue;
+            if (entry.Key.StartsWith("Oidc:", StringComparison.OrdinalIgnoreCase) ||
+                entry.Key.StartsWith("Platform:", StringComparison.OrdinalIgnoreCase))
+            {
+                api.WithEnvironment(entry.Key.Replace(":", "__"), entry.Value);
+            }
+        }
+
         // Connectors now run inside the API (single executable)
 
         // Add Demo Data Service (optional, for demonstrations and testing)
