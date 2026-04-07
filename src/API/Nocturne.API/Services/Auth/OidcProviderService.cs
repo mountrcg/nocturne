@@ -209,6 +209,17 @@ public class OidcProviderService : IOidcProviderService
         bool forceRefresh = false
     )
     {
+        if (IsConfigManaged)
+        {
+            var configProvider = _oidcOptions.Providers
+                .Select(MapConfigToModel)
+                .FirstOrDefault(p => p.Id == providerId);
+            if (configProvider == null)
+                return null;
+
+            return await FetchDiscoveryDocumentAsync(configProvider.IssuerUrl);
+        }
+
         var entity = await _dbContext.OidcProviders.FindAsync(providerId);
         if (entity == null)
             return null;
@@ -251,8 +262,8 @@ public class OidcProviderService : IOidcProviderService
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var result = new OidcProviderTestResult { Warnings = new List<string>() };
 
-        var entity = await _dbContext.OidcProviders.FindAsync(providerId);
-        if (entity == null)
+        var provider = await GetProviderByIdAsync(providerId);
+        if (provider == null)
         {
             result.Success = false;
             result.Error = "Provider not found";
@@ -261,7 +272,7 @@ public class OidcProviderService : IOidcProviderService
 
         try
         {
-            var document = await FetchDiscoveryDocumentAsync(entity.IssuerUrl);
+            var document = await FetchDiscoveryDocumentAsync(provider.IssuerUrl);
             stopwatch.Stop();
 
             if (document == null)
@@ -287,10 +298,17 @@ public class OidcProviderService : IOidcProviderService
                 result.Warnings.Add("Provider does not support RP-initiated logout");
             }
 
-            // Cache the document
-            entity.DiscoveryDocumentJson = JsonSerializer.Serialize(document);
-            entity.DiscoveryCachedAt = DateTime.UtcNow;
-            await _dbContext.SaveChangesAsync();
+            // Cache the document (DB providers only)
+            if (!IsConfigManaged)
+            {
+                var entity = await _dbContext.OidcProviders.FindAsync(providerId);
+                if (entity != null)
+                {
+                    entity.DiscoveryDocumentJson = JsonSerializer.Serialize(document);
+                    entity.DiscoveryCachedAt = DateTime.UtcNow;
+                    await _dbContext.SaveChangesAsync();
+                }
+            }
         }
         catch (Exception ex)
         {
