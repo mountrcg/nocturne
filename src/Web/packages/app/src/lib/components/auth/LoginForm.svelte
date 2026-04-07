@@ -175,7 +175,7 @@
       params.set("returnUrl", returnUrl);
     }
 
-    window.location.href = `/api/auth/login?${params.toString()}`;
+    window.location.href = `/api/v4/oidc/login?${params.toString()}`;
   }
 
   function getButtonStyle(buttonColor?: string): string {
