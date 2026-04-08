@@ -2667,6 +2667,7 @@ msgstr "Please sign in to continue"
 #~ msgstr "<0/> Signing in..."
 
 #: src/lib/components/layout/UserMenu.svelte
+#: src/routes/auth/bot/authorize/+page.svelte
 msgid "Sign in"
 msgstr "Sign in"
 
@@ -15497,37 +15498,32 @@ msgstr "<0/> iOS"
 msgid "<0/> Android"
 msgstr "<0/> Android"
 
-#: src/routes/auth/bot/authorize/+page.svelte
-msgid "Your chat account is now linked to Nocturne. You can close this tab."
-msgstr "Your chat account is now linked to Nocturne. You can close this tab."
+#~ msgid "Your chat account is now linked to Nocturne. You can close this tab."
+#~ msgstr "Your chat account is now linked to Nocturne. You can close this tab."
 
 #: src/routes/auth/bot/authorize/+page.svelte
 msgid "Connect Chat Account"
 msgstr "Connect Chat Account"
 
-#: src/routes/auth/bot/authorize/+page.svelte
-msgid "Allow the Nocturne bot to access your glucose data and send you alerts?"
-msgstr "Allow the Nocturne bot to access your glucose data and send you alerts?"
+#~ msgid "Allow the Nocturne bot to access your glucose data and send you alerts?"
+#~ msgstr "Allow the Nocturne bot to access your glucose data and send you alerts?"
 
-#: src/routes/auth/bot/authorize/+page.svelte
-msgid "Authorize"
-msgstr "Authorize"
+#~ msgid "Authorize"
+#~ msgstr "Authorize"
+
+#~ msgid "Not authenticated"
+#~ msgstr "Not authenticated"
 
 #: src/routes/auth/bot/authorize/+page.server.ts
-msgid "Not authenticated"
-msgstr "Not authenticated"
-
 #: src/routes/auth/bot/authorize/+page.server.ts
 msgid "Missing state parameter."
 msgstr "Missing state parameter."
 
-#: src/routes/auth/bot/authorize/+page.server.ts
-msgid "Link expired or invalid. Please run /connect again in your chat app."
-msgstr "Link expired or invalid. Please run /connect again in your chat app."
+#~ msgid "Link expired or invalid. Please run /connect again in your chat app."
+#~ msgstr "Link expired or invalid. Please run /connect again in your chat app."
 
-#: src/routes/auth/bot/authorize/+page.server.ts
-msgid "Invalid platform identity format."
-msgstr "Invalid platform identity format."
+#~ msgid "Invalid platform identity format."
+#~ msgstr "Invalid platform identity format."
 
 #: src/routes/auth/bot/authorize/+page.server.ts
 msgid "Failed to link account. Please try again."
@@ -17014,6 +17010,7 @@ msgstr "This instance has accounts that need a passkey registered. Enter your us
 msgid "Optional. Updates your display name if provided."
 msgstr "Optional. Updates your display name if provided."
 
+#: src/routes/auth/bot/authorize/+page.svelte
 #: src/routes/auth/recovery/+page.svelte
 #: src/routes/auth/recovery/+page.svelte
 msgid "Continue"
@@ -18909,3 +18906,55 @@ msgstr "Revoke platform admin from {0}"
 #: src/routes/settings/admin/+page.svelte
 msgid "Grant platform admin to {0}"
 msgstr "Grant platform admin to {0}"
+
+#: src/routes/auth/bot/authorize/+page.svelte
+msgid "Your chat account is now linked to Nocturne. You can close this tab and head back to your chat app."
+msgstr "Your chat account is now linked to Nocturne. You can close this tab and head back to your chat app."
+
+#: src/routes/auth/bot/authorize/+page.svelte
+msgid "Can't Complete This Link"
+msgstr "Can't Complete This Link"
+
+#: src/routes/auth/bot/authorize/+page.svelte
+msgid "Which Nocturne Instance?"
+msgstr "Which Nocturne Instance?"
+
+#: src/routes/auth/bot/authorize/+page.svelte
+msgid "Enter the slug of the Nocturne instance you'd like to link your chat account to."
+msgstr "Enter the slug of the Nocturne instance you'd like to link your chat account to."
+
+#: src/routes/auth/bot/authorize/+page.svelte
+msgid "Instance slug"
+msgstr "Instance slug"
+
+#: src/routes/auth/bot/authorize/+page.svelte
+msgid "Sign in to your Nocturne account to finish connecting your chat account."
+msgstr "Sign in to your Nocturne account to finish connecting your chat account."
+
+#: src/routes/auth/bot/authorize/+page.svelte
+msgid "Allow the Nocturne bot to access glucose data on your behalf and send alerts to your <0/> account?"
+msgstr "Allow the Nocturne bot to access glucose data on your behalf and send alerts to your <0/> account?"
+
+#: src/routes/auth/bot/authorize/+page.svelte
+msgid "Connect"
+msgstr "Connect"
+
+#: src/routes/auth/bot/authorize/+page.server.ts
+msgid "Missing state token."
+msgstr "Missing state token."
+
+#: src/routes/auth/bot/authorize/+page.server.ts
+msgid "This link is expired or invalid. Please run /connect in your chat app again."
+msgstr "This link is expired or invalid. Please run /connect in your chat app again."
+
+#: src/routes/auth/bot/authorize/+page.server.ts
+msgid "Not authenticated."
+msgstr "Not authenticated."
+
+#: src/routes/auth/bot/authorize/+page.server.ts
+msgid "Please enter a valid instance slug (letters, digits, hyphens)."
+msgstr "Please enter a valid instance slug (letters, digits, hyphens)."
+
+#: src/routes/auth/bot/authorize/+page.server.ts
+msgid "Server misconfigured: PUBLIC_BASE_DOMAIN not set."
+msgstr "Server misconfigured: PUBLIC_BASE_DOMAIN not set."
