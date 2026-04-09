@@ -298,8 +298,8 @@ public class PasskeyService : IPasskeyService
 
     public async Task<bool> HasOidcLinkAsync(Guid subjectId)
     {
-        return await _dbContext.Subjects
-            .AnyAsync(s => s.Id == subjectId && s.OidcSubjectId != null);
+        return await _dbContext.SubjectOidcIdentities
+            .AnyAsync(i => i.SubjectId == subjectId);
     }
 
     private string CreateChallengeToken(string optionsJson, Guid? subjectId)

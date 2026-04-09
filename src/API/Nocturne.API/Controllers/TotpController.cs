@@ -197,8 +197,6 @@ public class TotpController : ControllerBase
             Id = subject.Id,
             Name = result.DisplayName ?? result.Username,
             Email = subject.Email,
-            OidcSubjectId = subject.OidcSubjectId,
-            OidcIssuer = subject.OidcIssuer,
         };
 
         var accessToken = _jwtService.GenerateAccessToken(subjectInfo, permissions, roles);

@@ -113,7 +113,6 @@ public class RecoveryModeCheckServiceTests : IDisposable
             Name = "OIDC User",
             IsActive = true,
             IsSystemSubject = false,
-            OidcSubjectId = "oidc-sub-123",
         });
         await _dbContext.SaveChangesAsync();
 
@@ -133,7 +132,6 @@ public class RecoveryModeCheckServiceTests : IDisposable
             Name = "Orphaned User",
             IsActive = true,
             IsSystemSubject = false,
-            OidcSubjectId = null,
         });
         await _dbContext.SaveChangesAsync();
 
@@ -153,7 +151,6 @@ public class RecoveryModeCheckServiceTests : IDisposable
             Name = "System Subject",
             IsActive = true,
             IsSystemSubject = true,
-            OidcSubjectId = null,
         });
         await _dbContext.SaveChangesAsync();
 
@@ -173,7 +170,6 @@ public class RecoveryModeCheckServiceTests : IDisposable
             Name = "Inactive User",
             IsActive = false,
             IsSystemSubject = false,
-            OidcSubjectId = null,
         });
         await _dbContext.SaveChangesAsync();
 
@@ -193,7 +189,6 @@ public class RecoveryModeCheckServiceTests : IDisposable
             Name = "Orphaned User",
             IsActive = true,
             IsSystemSubject = false,
-            OidcSubjectId = null,
         });
         await _dbContext.SaveChangesAsync();
 

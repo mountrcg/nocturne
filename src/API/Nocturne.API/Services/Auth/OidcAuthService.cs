@@ -211,6 +211,7 @@ public class OidcAuthService : IOidcAuthService
 
         // Find or create subject
         var subject = await _subjectService.FindOrCreateFromOidcAsync(
+            provider.Id,
             idTokenClaims.Sub,
             provider.IssuerUrl,
             idTokenClaims.Email,
@@ -233,8 +234,6 @@ public class OidcAuthService : IOidcAuthService
                 Id = subject.Id,
                 Name = subject.Name,
                 Email = subject.Email,
-                OidcSubjectId = idTokenClaims.Sub,
-                OidcIssuer = provider.IssuerUrl,
             },
             permissions,
             roles,
@@ -349,8 +348,6 @@ public class OidcAuthService : IOidcAuthService
                 Id = subject.Id,
                 Name = subject.Name,
                 Email = subject.Email,
-                OidcSubjectId = subject.OidcSubjectId,
-                OidcIssuer = subject.OidcIssuer,
             },
             permissions,
             roles,
@@ -422,12 +419,12 @@ public class OidcAuthService : IOidcAuthService
         var permissions = await _subjectService.GetSubjectPermissionsAsync(subjectId);
         var roles = await _subjectService.GetSubjectRolesAsync(subjectId);
 
-        // Get provider name if linked
+        // Get provider name from linked OIDC identities
         string? providerName = null;
-        if (!string.IsNullOrEmpty(subject.OidcIssuer))
+        var linkedIdentities = await _subjectService.GetLinkedOidcIdentitiesAsync(subjectId);
+        if (linkedIdentities.Count > 0)
         {
-            var provider = await _providerService.GetProviderByIssuerAsync(subject.OidcIssuer);
-            providerName = provider?.Name;
+            providerName = linkedIdentities[0].ProviderName;
         }
 
         return new OidcUserInfo
@@ -447,6 +444,24 @@ public class OidcAuthService : IOidcAuthService
     public async Task<Guid?> ValidateSessionAsync(string refreshToken)
     {
         return await _refreshTokenService.ValidateRefreshTokenAsync(refreshToken);
+    }
+
+    /// <inheritdoc />
+    public Task<OidcAuthorizationRequest> GenerateLinkAuthorizationUrlAsync(
+        Guid providerId, Guid subjectId, string? returnUrl = null)
+    {
+        // Stub — will be implemented in Phase 4
+        throw new NotImplementedException();
+    }
+
+    /// <inheritdoc />
+    public Task<OidcLinkResult> HandleLinkCallbackAsync(
+        string code, string state, string expectedState,
+        Guid authenticatedSubjectId,
+        string? ipAddress = null, string? userAgent = null)
+    {
+        // Stub — will be implemented in Phase 4
+        throw new NotImplementedException();
     }
 
     #region Private Helper Methods

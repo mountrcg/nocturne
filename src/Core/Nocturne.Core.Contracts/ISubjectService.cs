@@ -31,11 +31,19 @@ public interface ISubjectService
     /// <param name="defaultRoles">Default roles to assign if creating</param>
     /// <returns>Found or created subject</returns>
     Task<Subject> FindOrCreateFromOidcAsync(
+        Guid providerId,
         string oidcSubjectId,
         string issuer,
         string? email = null,
         string? name = null,
         IEnumerable<string>? defaultRoles = null);
+
+    Task<IReadOnlyList<SubjectOidcIdentity>> GetLinkedOidcIdentitiesAsync(Guid subjectId);
+    Task<(OidcLinkOutcome Outcome, Guid? IdentityId)> AttachOidcIdentityAsync(
+        Guid subjectId, Guid providerId, string oidcSubjectId, string issuer, string? email);
+    Task<bool> RemoveOidcIdentityAsync(Guid subjectId, Guid identityId);
+    Task<int> CountPrimaryAuthFactorsAsync(Guid subjectId);
+    Task UpdateOidcIdentityLastUsedAsync(Guid identityId);
 
     /// <summary>
     /// Create a new subject (device/API key)

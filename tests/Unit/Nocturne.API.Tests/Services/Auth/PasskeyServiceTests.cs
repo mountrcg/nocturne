@@ -150,7 +150,6 @@ public class PasskeyServiceTests
         {
             Id = _subjectId,
             Name = "Test User",
-            OidcSubjectId = "google|12345",
         });
         await _dbContext.SaveChangesAsync();
 
@@ -169,7 +168,6 @@ public class PasskeyServiceTests
         {
             Id = _subjectId,
             Name = "Test User",
-            OidcSubjectId = null,
         });
         await _dbContext.SaveChangesAsync();
 

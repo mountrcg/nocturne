@@ -203,8 +203,6 @@ public class PasskeyController : ControllerBase
                 Id = subject.Id,
                 Name = assertionResult.DisplayName ?? assertionResult.Username,
                 Email = subject.Email,
-                OidcSubjectId = subject.OidcSubjectId,
-                OidcIssuer = subject.OidcIssuer,
             };
 
             var accessToken = _jwtService.GenerateAccessToken(subjectInfo, permissions, roles);
@@ -290,8 +288,6 @@ public class PasskeyController : ControllerBase
             Id = subjectEntity.Id,
             Name = subjectEntity.Name,
             Email = subjectEntity.Email,
-            OidcSubjectId = subjectEntity.OidcSubjectId,
-            OidcIssuer = subjectEntity.OidcIssuer,
         };
 
         var recoveryToken = _jwtService.GenerateAccessToken(
@@ -461,7 +457,7 @@ public class PasskeyController : ControllerBase
                     s => s.Id,
                     (tm, s) => s)
                 .Where(s =>
-                    s.OidcSubjectId == null &&
+                    !_dbContext.SubjectOidcIdentities.Any(i => i.SubjectId == s.Id) &&
                     !_dbContext.PasskeyCredentials.Any(p => p.SubjectId == s.Id))
                 .AnyAsync();
         }
@@ -504,7 +500,7 @@ public class PasskeyController : ControllerBase
                         s => s.Id,
                         (tm, s) => s)
                     .Where(s =>
-                        s.OidcSubjectId == null &&
+                        !_dbContext.SubjectOidcIdentities.Any(i => i.SubjectId == s.Id) &&
                         !_dbContext.PasskeyCredentials.Any(p => p.SubjectId == s.Id))
                     .AnyAsync();
             }
