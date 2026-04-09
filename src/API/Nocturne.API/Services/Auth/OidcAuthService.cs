@@ -521,6 +521,20 @@ public class OidcAuthService : IOidcAuthService
         var provider = parsed.Provider!;
         var claims = parsed.Claims!;
 
+        return await AttachVerifiedIdentityAsync(stateData, provider, claims, authenticatedSubjectId);
+    }
+
+    /// <summary>
+    /// Internal branching logic for attaching a verified OIDC identity to an authenticated
+    /// subject. Extracted from <see cref="HandleLinkCallbackAsync"/> so it can be unit tested
+    /// without having to mock token exchange + JWKS verification.
+    /// </summary>
+    internal async Task<OidcLinkResult> AttachVerifiedIdentityAsync(
+        OidcStateData stateData,
+        OidcProvider provider,
+        OidcIdTokenClaims claims,
+        Guid authenticatedSubjectId)
+    {
         if (stateData.Intent != "link")
         {
             return OidcLinkResult.Failed("invalid_intent", "State was not issued for a link flow");
@@ -756,7 +770,7 @@ public class OidcAuthService : IOidcAuthService
     /// <summary>
     /// State data encoded in the state parameter
     /// </summary>
-    private class OidcStateData
+    internal class OidcStateData
     {
         public Guid ProviderId { get; set; }
         public string? ReturnUrl { get; set; }
@@ -782,7 +796,7 @@ public class OidcAuthService : IOidcAuthService
     /// <summary>
     /// Claims extracted from ID token
     /// </summary>
-    private class OidcIdTokenClaims
+    internal class OidcIdTokenClaims
     {
         public string Sub { get; set; } = string.Empty;
         public string? Email { get; set; }
