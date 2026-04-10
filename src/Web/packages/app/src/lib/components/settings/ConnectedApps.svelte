@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui/button";
   import * as Card from "$lib/components/ui/card";
+  import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { Badge } from "$lib/components/ui/badge";
   import { Separator } from "$lib/components/ui/separator";
   import {
@@ -9,11 +10,13 @@
     Check,
     AlertTriangle,
     Clock,
-    Loader2,
+    LoaderCircle,
     Plus,
+    BadgeCheck,
+    ExternalLink,
   } from "lucide-svelte";
   import { formatDate } from "$lib/utils/formatting";
-  import { getGrants, revokeGrant } from "$lib/data/oauth.remote";
+  import { list, revoke } from "$lib/api/generated/connectedApps.generated.remote";
 
   /** Human-readable descriptions for each OAuth scope. */
   const scopeDescriptions: Record<string, string> = {
@@ -35,11 +38,8 @@
   };
 
   // Remote queries
-  const grantsQuery = $derived(getGrants());
-
-  // Derived data from queries
-  const grants = $derived(grantsQuery.current ?? []);
-  const appGrants = $derived(grants.filter((g) => g.grantType === "app"));
+  const appsQuery = $derived(list());
+  const apps = $derived(appsQuery.current ?? []);
 
   // Loading/error states
   let isRevoking = $state<string | null>(null);
@@ -55,11 +55,11 @@
   }
 
   /** Handle revoking a grant */
-  async function handleRevokeGrant(grantId: string) {
+  async function handleRevoke(grantId: string) {
     isRevoking = grantId;
     errorMessage = null;
     try {
-      await revokeGrant({ grantId });
+      await revoke(grantId);
       successMessage = "App access revoked successfully.";
       clearMessages();
     } catch (err) {
@@ -105,7 +105,7 @@
     </div>
   {/if}
 
-  {#if appGrants.length === 0}
+  {#if apps.length === 0}
     <Card.Root>
       <Card.Content
         class="flex flex-col items-center justify-center py-12 text-center"
@@ -122,41 +122,81 @@
       </Card.Content>
     </Card.Root>
   {:else}
-    {#each appGrants as grant (grant.id)}
+    {#each apps as app (app.grantId)}
       <Card.Root>
         <Card.Header>
           <div class="flex items-start justify-between gap-4">
             <div class="space-y-1 flex-1 min-w-0">
               <Card.Title class="flex items-center gap-2 flex-wrap">
                 <span class="truncate">
-                  {grant.clientDisplayName ?? grant.clientId}
+                  {app.clientName ?? app.clientId}
                 </span>
-                {#if grant.isKnownClient}
+                {#if app.isVerified}
                   <Badge variant="secondary" class="shrink-0">
-                    <Check class="mr-1 h-3 w-3" />
+                    <BadgeCheck class="mr-1 h-3 w-3" />
                     Verified
+                  </Badge>
+                {:else}
+                  <Badge variant="outline" class="shrink-0 text-xs">
+                    Self-registered
                   </Badge>
                 {/if}
               </Card.Title>
-              {#if grant.label}
-                <Card.Description>{grant.label}</Card.Description>
+              {#if app.label}
+                <Card.Description>{app.label}</Card.Description>
+              {/if}
+              {#if app.clientUri}
+                <Card.Description>
+                  <a
+                    href={app.clientUri}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center gap-1 text-xs hover:underline"
+                  >
+                    {app.clientUri}
+                    <ExternalLink class="h-3 w-3" />
+                  </a>
+                </Card.Description>
               {/if}
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              class="text-destructive border-destructive/30 hover:bg-destructive/10 shrink-0"
-              disabled={isRevoking === grant.id}
-              onclick={() => handleRevokeGrant(grant.id!)}
-            >
-              {#if isRevoking === grant.id}
-                <Loader2 class="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              {:else}
-                <Trash2 class="mr-1.5 h-3.5 w-3.5" />
-              {/if}
-              Revoke
-            </Button>
+            <AlertDialog.Root>
+              <AlertDialog.Trigger>
+                {#snippet child({ props })}
+                  <Button
+                    {...props}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    class="text-destructive border-destructive/30 hover:bg-destructive/10 shrink-0"
+                    disabled={isRevoking === app.grantId}
+                  >
+                    {#if isRevoking === app.grantId}
+                      <LoaderCircle class="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    {:else}
+                      <Trash2 class="mr-1.5 h-3.5 w-3.5" />
+                    {/if}
+                    Revoke
+                  </Button>
+                {/snippet}
+              </AlertDialog.Trigger>
+              <AlertDialog.Content>
+                <AlertDialog.Header>
+                  <AlertDialog.Title>Revoke access</AlertDialog.Title>
+                  <AlertDialog.Description>
+                    Revoke {app.clientName ?? "this app"}'s access to your data?
+                    The app will need to be re-authorized to regain access.
+                  </AlertDialog.Description>
+                </AlertDialog.Header>
+                <AlertDialog.Footer>
+                  <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+                  <AlertDialog.Action
+                    onclick={() => handleRevoke(app.grantId!)}
+                  >
+                    Revoke
+                  </AlertDialog.Action>
+                </AlertDialog.Footer>
+              </AlertDialog.Content>
+            </AlertDialog.Root>
           </div>
         </Card.Header>
         <Card.Content class="space-y-4">
@@ -167,7 +207,7 @@
               Permissions
             </p>
             <ul class="space-y-1.5">
-              {#each grant.scopes ?? [] as scope}
+              {#each app.scopes ?? [] as scope}
                 <li class="flex items-start gap-2 text-sm">
                   <Check class="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
                   <span class="text-muted-foreground">
@@ -185,12 +225,12 @@
           >
             <span class="flex items-center gap-1.5">
               <Clock class="h-3 w-3" />
-              Created {formatDate(grant.createdAt)}
+              Created {formatDate(app.createdAt)}
             </span>
-            {#if grant.lastUsedAt}
+            {#if app.lastUsedAt}
               <span class="flex items-center gap-1.5">
                 <Clock class="h-3 w-3" />
-                Last used {formatDate(grant.lastUsedAt)}
+                Last used {formatDate(app.lastUsedAt)}
               </span>
             {/if}
           </div>
