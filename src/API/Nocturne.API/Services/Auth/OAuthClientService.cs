@@ -37,7 +37,7 @@ public class OAuthClientService : IOAuthClientService
 
         if (entity == null)
         {
-            _logger.LogDebug("OAuth client not found: {ClientId}", clientId);
+            _logger.LogDebug("OAuth client not found: {ClientId}", SanitizeForLog(clientId));
             return null;
         }
 
@@ -74,7 +74,7 @@ public class OAuthClientService : IOAuthClientService
         {
             _logger.LogWarning(
                 "Redirect URI validation failed: client {ClientId} is not registered. " +
-                "Apps must call POST /oauth/register before authorize.", clientId);
+                "Apps must call POST /oauth/register before authorize.", SanitizeForLog(clientId));
             return false;
         }
 
@@ -82,7 +82,7 @@ public class OAuthClientService : IOAuthClientService
         if (registered.Count == 0)
         {
             _logger.LogWarning(
-                "Client {ClientId} has no registered redirect URIs", clientId);
+                "Client {ClientId} has no registered redirect URIs", SanitizeForLog(clientId));
             return false;
         }
 
@@ -120,11 +120,8 @@ public class OAuthClientService : IOAuthClientService
         var existingSet = new HashSet<string>(existingSoftwareIds, StringComparer.Ordinal);
 
         var added = 0;
-        foreach (var entry in KnownOAuthClients.Entries)
+        foreach (var entry in KnownOAuthClients.Entries.Where(e => !existingSet.Contains(e.SoftwareId)))
         {
-            if (existingSet.Contains(entry.SoftwareId))
-                continue;
-
             _dbContext.OAuthClients.Add(new OAuthClientEntity
             {
                 Id = Guid.CreateVersion7(),
@@ -173,7 +170,7 @@ public class OAuthClientService : IOAuthClientService
             {
                 _logger.LogDebug(
                     "DCR: returning existing client for software_id {SoftwareId} (tenant {TenantId})",
-                    softwareId, existing.TenantId);
+                    SanitizeForLog(softwareId), existing.TenantId);
                 return MapToInfo(existing);
             }
         }
@@ -205,9 +202,30 @@ public class OAuthClientService : IOAuthClientService
 
         _logger.LogInformation(
             "DCR: registered client {ClientId} software_id={SoftwareId} known={IsKnown}",
-            entity.ClientId, softwareId ?? "(none)", entity.IsKnown);
+            entity.ClientId, SanitizeForLog(softwareId) ?? "(none)", entity.IsKnown);
 
         return MapToInfo(entity);
+    }
+
+    /// <summary>
+    /// Strip control characters (including CR/LF) from a user-supplied value
+    /// before it reaches a log sink. Structured-logging placeholders already
+    /// avoid message injection, but CodeQL can't prove that — and collapsed
+    /// single-line values are friendlier to any downstream tail/grep.
+    /// Values are also truncated to keep log lines bounded.
+    /// </summary>
+    private static string? SanitizeForLog(string? value, int maxLength = 200)
+    {
+        if (value is null)
+            return null;
+
+        var buffer = new char[Math.Min(value.Length, maxLength)];
+        for (var i = 0; i < buffer.Length; i++)
+        {
+            var c = value[i];
+            buffer[i] = char.IsControl(c) ? '_' : c;
+        }
+        return new string(buffer);
     }
 
     /// <summary>

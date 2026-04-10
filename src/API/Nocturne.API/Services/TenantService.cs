@@ -528,11 +528,8 @@ public partial class TenantService : ITenantService
         var existingSet = new HashSet<string>(existingSoftwareIds, StringComparer.Ordinal);
 
         var added = 0;
-        foreach (var entry in KnownOAuthClients.Entries)
+        foreach (var entry in KnownOAuthClients.Entries.Where(e => !existingSet.Contains(e.SoftwareId)))
         {
-            if (existingSet.Contains(entry.SoftwareId))
-                continue;
-
             context.OAuthClients.Add(new OAuthClientEntity
             {
                 Id = Guid.CreateVersion7(),
