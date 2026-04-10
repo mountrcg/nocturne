@@ -364,6 +364,13 @@ public partial class TenantService : ITenantService
                 context.Tenants.Add(tenant);
                 await context.SaveChangesAsync(ct);
 
+                // Set RLS tenant context for the remainder of this transaction.
+                // The connection is already open, so the TenantConnectionInterceptor
+                // won't fire again — we must set the GUC manually.
+                await context.Database.ExecuteSqlRawAsync(
+                    "SELECT set_config('app.current_tenant_id', {0}, false)",
+                    tenant.Id.ToString());
+
                 // Seed default roles for this tenant (inline to share transaction context)
                 var now = DateTime.UtcNow;
                 foreach (var (roleSlug, permissions) in TenantPermissions.SeedRolePermissions)
