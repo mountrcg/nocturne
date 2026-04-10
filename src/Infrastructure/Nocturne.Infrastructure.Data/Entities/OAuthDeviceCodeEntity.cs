@@ -8,13 +8,21 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// Used by headless clients (CLI tools, scripts, IoT devices, pump rigs).
 /// </summary>
 [Table("oauth_device_codes")]
-public class OAuthDeviceCodeEntity
+public class OAuthDeviceCodeEntity : ITenantScoped
 {
     /// <summary>
     /// Primary key - UUID Version 7
     /// </summary>
     [Key]
     public Guid Id { get; set; }
+
+    /// <summary>
+    /// Tenant that owns this device code. Stamped at creation from the
+    /// requesting tenant subdomain. Must match at approval time.
+    /// </summary>
+    [Required]
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
 
     /// <summary>
     /// The client ID that initiated the device flow

@@ -9,13 +9,20 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// only its SHA-256 hash is persisted for verification during token exchange.
 /// </summary>
 [Table("oauth_authorization_codes")]
-public class OAuthAuthorizationCodeEntity
+public class OAuthAuthorizationCodeEntity : ITenantScoped
 {
     /// <summary>
     /// Primary key - UUID Version 7
     /// </summary>
     [Key]
     public Guid Id { get; set; }
+
+    /// <summary>
+    /// Tenant that owns this authorization code.
+    /// </summary>
+    [Required]
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
 
     /// <summary>
     /// Foreign key to the OAuth client that initiated the authorization request

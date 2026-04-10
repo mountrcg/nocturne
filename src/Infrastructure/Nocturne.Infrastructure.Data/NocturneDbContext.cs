@@ -1233,9 +1233,16 @@ public class NocturneDbContext : DbContext
         // OAuth Client indexes
         modelBuilder
             .Entity<OAuthClientEntity>()
-            .HasIndex(c => c.ClientId)
-            .HasDatabaseName("ix_oauth_clients_client_id")
+            .HasIndex(c => new { c.TenantId, c.ClientId })
+            .HasDatabaseName("ix_oauth_clients_tenant_client_id")
             .IsUnique();
+
+        modelBuilder
+            .Entity<OAuthClientEntity>()
+            .HasIndex(c => new { c.TenantId, c.SoftwareId })
+            .HasDatabaseName("ix_oauth_clients_tenant_software_id")
+            .IsUnique()
+            .HasFilter("\"software_id\" IS NOT NULL");
 
         // OAuth Grant indexes
         modelBuilder
@@ -1252,6 +1259,11 @@ public class NocturneDbContext : DbContext
             .Entity<OAuthGrantEntity>()
             .HasIndex(g => new { g.ClientEntityId, g.SubjectId })
             .HasDatabaseName("ix_oauth_grants_client_subject");
+
+        modelBuilder
+            .Entity<OAuthGrantEntity>()
+            .HasIndex(g => new { g.TenantId, g.SubjectId })
+            .HasDatabaseName("ix_oauth_grants_tenant_subject");
 
         modelBuilder
             .Entity<OAuthGrantEntity>()

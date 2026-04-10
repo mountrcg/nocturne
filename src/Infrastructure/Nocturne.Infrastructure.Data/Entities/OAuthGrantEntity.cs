@@ -9,13 +9,21 @@ namespace Nocturne.Infrastructure.Data.Entities;
 /// User-to-user shares (followers/caregivers) use the same table with grant_type = follower.
 /// </summary>
 [Table("oauth_grants")]
-public class OAuthGrantEntity
+public class OAuthGrantEntity : ITenantScoped
 {
     /// <summary>
     /// Primary key - UUID Version 7
     /// </summary>
     [Key]
     public Guid Id { get; set; }
+
+    /// <summary>
+    /// Tenant that owns this grant. Every grant is bound to exactly one tenant
+    /// so a token issued on one subdomain is never valid on another.
+    /// </summary>
+    [Required]
+    [Column("tenant_id")]
+    public Guid TenantId { get; set; }
 
     /// <summary>
     /// Foreign key to the OAuth client (null for direct grants)
