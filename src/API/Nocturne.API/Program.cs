@@ -395,6 +395,9 @@ if (!isNSwagGeneration && !app.Environment.IsEnvironment("Testing"))
 
     // Seed default tenant if none exists and backfill tenant_id on existing rows
     await DefaultTenantSeeder.SeedDefaultTenantAsync(app.Services);
+
+    // Sync config-managed OIDC providers to the database (satisfies FK constraints)
+    await OidcProviderService.SyncConfigProvidersAsync(app.Services);
 }
 else if (isNSwagGeneration)
 {

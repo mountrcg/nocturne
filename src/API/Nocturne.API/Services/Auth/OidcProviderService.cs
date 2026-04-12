@@ -46,6 +46,61 @@ public class OidcProviderService : IOidcProviderService
     /// <inheritdoc />
     public bool IsConfigManaged => _oidcOptions.Providers.Count > 0;
 
+    /// <summary>
+    /// Syncs config-managed providers into the oidc_providers table so that
+    /// foreign keys from subject_oidc_identities are satisfied. Called at
+    /// startup when providers are defined in appsettings rather than the DB.
+    /// </summary>
+    public static async Task SyncConfigProvidersAsync(IServiceProvider services)
+    {
+        using var scope = services.CreateScope();
+        var options = scope.ServiceProvider.GetRequiredService<IOptions<OidcOptions>>().Value;
+        if (options.Providers.Count == 0)
+            return;
+
+        var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<NocturneDbContext>>();
+        await using var db = await factory.CreateDbContextAsync();
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<OidcProviderService>>();
+
+        foreach (var config in options.Providers)
+        {
+            var id = CreateDeterministicGuid(config.IssuerUrl);
+            var existing = await db.OidcProviders.FindAsync(id);
+            if (existing != null)
+            {
+                existing.Name = config.Name;
+                existing.IssuerUrl = config.IssuerUrl.TrimEnd('/');
+                existing.ClientId = config.ClientId;
+                existing.IsEnabled = config.IsEnabled;
+                existing.DisplayOrder = config.DisplayOrder;
+                existing.Scopes = EnsureOpenIdScope(config.Scopes);
+                existing.DefaultRoles = config.DefaultRoles;
+                existing.Icon = config.Icon;
+                existing.ButtonColor = config.ButtonColor;
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                db.OidcProviders.Add(new OidcProviderEntity
+                {
+                    Id = id,
+                    Name = config.Name,
+                    IssuerUrl = config.IssuerUrl.TrimEnd('/'),
+                    ClientId = config.ClientId,
+                    IsEnabled = config.IsEnabled,
+                    DisplayOrder = config.DisplayOrder,
+                    Scopes = EnsureOpenIdScope(config.Scopes),
+                    DefaultRoles = config.DefaultRoles,
+                    Icon = config.Icon,
+                    ButtonColor = config.ButtonColor,
+                });
+            }
+        }
+
+        await db.SaveChangesAsync();
+        logger.LogInformation("Synced {Count} config-managed OIDC providers to database", options.Providers.Count);
+    }
+
     /// <inheritdoc />
     public async Task<List<OidcProvider>> GetEnabledProvidersAsync()
     {
